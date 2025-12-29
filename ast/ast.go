@@ -83,6 +83,15 @@ type BlockStatement struct {
 func (bs *BlockStatement) statementNode()       {}
 func (bs *BlockStatement) TokenLiteral() string { return bs.Token.Literal }
 
+// ReturnStatement represents: return [expr]
+type ReturnStatement struct {
+	Token token.Token // the RETURN token
+	Value Expression  // optional, can be nil
+}
+
+func (rs *ReturnStatement) statementNode()       {}
+func (rs *ReturnStatement) TokenLiteral() string { return rs.Token.Literal }
+
 // Identifier represents a variable name.
 type Identifier struct {
 	Token token.Token // the IDENT token

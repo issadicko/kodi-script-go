@@ -193,6 +193,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseVarDecl()
 	case token.IF:
 		return p.parseIfStatement()
+	case token.RETURN:
+		return p.parseReturnStatement()
 	case token.IDENT:
 		if p.peekTokenIs(token.ASSIGN) {
 			return p.parseAssignment()
@@ -214,6 +216,22 @@ func (p *Parser) parseVarDecl() *ast.VarDecl {
 
 	if !p.expectPeek(token.ASSIGN) {
 		return nil
+	}
+
+	p.nextToken()
+	stmt.Value = p.parseExpression(LOWEST)
+
+	return stmt
+}
+
+// parseReturnStatement parses: return [expr]
+func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
+	stmt := &ast.ReturnStatement{Token: p.curToken}
+
+	// Check if there's an expression after return
+	// If next token is a statement terminator or EOF, return without value
+	if p.peekTokenIs(token.SEMICOLON) || p.peekTokenIs(token.NEWLINE) || p.peekTokenIs(token.EOF) || p.peekTokenIs(token.RBRACE) {
+		return stmt
 	}
 
 	p.nextToken()

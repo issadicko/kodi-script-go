@@ -11,6 +11,11 @@ import (
 // Value represents a runtime value in KodiScript.
 type Value interface{}
 
+// ReturnValue wraps a value to signal an early return from execution.
+type ReturnValue struct {
+	Value Value
+}
+
 // Environment holds variable bindings.
 type Environment struct {
 	store  map[string]Value
@@ -86,6 +91,10 @@ func (i *Interpreter) Eval(program *ast.Program) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Unwrap return values at the top level
+		if rv, ok := val.(*ReturnValue); ok {
+			return rv.Value, nil
+		}
 		result = val
 	}
 
@@ -121,6 +130,17 @@ func (i *Interpreter) evalStatement(stmt ast.Statement) (Value, error) {
 	case *ast.IfStatement:
 		return i.evalIfStatement(s)
 
+	case *ast.ReturnStatement:
+		var val Value
+		if s.Value != nil {
+			var err error
+			val, err = i.evalExpression(s.Value)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return &ReturnValue{Value: val}, nil
+
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}
@@ -148,6 +168,10 @@ func (i *Interpreter) evalBlockStatement(block *ast.BlockStatement) (Value, erro
 		val, err := i.evalStatement(stmt)
 		if err != nil {
 			return nil, err
+		}
+		// Propagate return values up the call stack
+		if _, ok := val.(*ReturnValue); ok {
+			return val, nil
 		}
 		result = val
 	}

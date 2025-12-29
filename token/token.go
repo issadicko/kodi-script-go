@@ -49,12 +49,13 @@ const (
 	DOT       Type = "."
 
 	// Keywords
-	LET   Type = "LET"
-	IF    Type = "IF"
-	ELSE  Type = "ELSE"
-	TRUE  Type = "TRUE"
-	FALSE Type = "FALSE"
-	NULL  Type = "NULL"
+	LET    Type = "LET"
+	IF     Type = "IF"
+	ELSE   Type = "ELSE"
+	TRUE   Type = "TRUE"
+	FALSE  Type = "FALSE"
+	NULL   Type = "NULL"
+	RETURN Type = "RETURN"
 )
 
 // Token represents a single token with its type, literal value, and position.
@@ -67,12 +68,13 @@ type Token struct {
 
 // keywords maps keyword strings to their token types.
 var keywords = map[string]Type{
-	"let":   LET,
-	"if":    IF,
-	"else":  ELSE,
-	"true":  TRUE,
-	"false": FALSE,
-	"null":  NULL,
+	"let":    LET,
+	"if":     IF,
+	"else":   ELSE,
+	"true":   TRUE,
+	"false":  FALSE,
+	"null":   NULL,
+	"return": RETURN,
 }
 
 // LookupIdent checks if an identifier is a keyword and returns the appropriate token type.

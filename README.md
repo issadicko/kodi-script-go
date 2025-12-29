@@ -67,19 +67,82 @@ result := kodi.Run(`
 
 ## Fonctions Natives
 
+### Chaînes de caractères
 | Fonction | Description |
 |----------|-------------|
 | `print(...)` | Affiche des valeurs |
 | `toString(val)` | Convertit en string |
 | `toNumber(val)` | Convertit en nombre |
+| `length(str)` | Longueur d'une chaîne |
+| `substring(str, start, [end])` | Extrait une sous-chaîne |
+| `toUpperCase(str)` | Convertit en majuscules |
+| `toLowerCase(str)` | Convertit en minuscules |
+| `trim(str)` | Supprime les espaces |
+| `replace(str, old, new)` | Remplace du texte |
+| `split(str, sep)` | Sépare en tableau |
+| `join(arr, sep)` | Joint un tableau |
+| `contains(str, substr)` | Vérifie si contient |
+| `startsWith(str, prefix)` | Vérifie le début |
+| `endsWith(str, suffix)` | Vérifie la fin |
+| `indexOf(str, substr)` | Position d'une sous-chaîne |
+
+### Math
+| Fonction | Description |
+|----------|-------------|
+| `abs(n)` | Valeur absolue |
+| `floor(n)` | Arrondi inférieur |
+| `ceil(n)` | Arrondi supérieur |
+| `round(n)` | Arrondi |
+| `min(a, b, ...)` | Minimum |
+| `max(a, b, ...)` | Maximum |
+| `pow(base, exp)` | Puissance |
+| `sqrt(n)` | Racine carrée |
+| `sin(n)`, `cos(n)`, `tan(n)` | Trigonométrie |
+| `log(n)`, `log10(n)`, `exp(n)` | Logarithmes |
+
+### Random
+| Fonction | Description |
+|----------|-------------|
+| `random()` | Nombre aléatoire [0, 1) |
+| `randomInt(min, max)` | Entier aléatoire |
+| `randomUUID()` | UUID v4 aléatoire |
+
+### Crypto
+| Fonction | Description |
+|----------|-------------|
+| `md5(str)` | Hash MD5 |
+| `sha1(str)` | Hash SHA-1 |
+| `sha256(str)` | Hash SHA-256 |
+
+### JSON / Encodage
+| Fonction | Description |
+|----------|-------------|
+| `jsonParse(str)` | Parse du JSON |
+| `jsonStringify(val)` | Sérialise en JSON |
 | `base64Encode(str)` | Encode en Base64 |
 | `base64Decode(str)` | Décode du Base64 |
 | `urlEncode(str)` | Encode pour URL |
 | `urlDecode(str)` | Décode une URL |
-| `jsonParse(str)` | Parse du JSON |
-| `jsonStringify(val)` | Sérialise en JSON |
+
+### Tableaux
+| Fonction | Description |
+|----------|-------------|
+| `sort(arr, [order])` | Trie (asc/desc) |
+| `sortBy(arr, field, [order])` | Trie par champ |
+| `reverse(arr)` | Inverse l'ordre |
+| `size(arr)` | Taille du tableau |
+| `first(arr)` | Premier élément |
+| `last(arr)` | Dernier élément |
+| `slice(arr, start, [end])` | Extrait une portion |
+
+### Types
+| Fonction | Description |
+|----------|-------------|
 | `typeOf(val)` | Retourne le type |
 | `isNull(val)` | Vérifie si null |
+| `isNumber(val)` | Vérifie si nombre |
+| `isString(val)` | Vérifie si chaîne |
+| `isBool(val)` | Vérifie si booléen |
 
 ## Fonctions Personnalisées
 
@@ -117,9 +180,16 @@ let total = 10 +
             20 +
             30
 
+// Return statement (arrête l'exécution et retourne la valeur)
+let x = 10
+if (x > 5) {
+    return "grand"  // Retour anticipé
+}
+return "petit"
+
 // Point-virgule optionnel
-let x = 1
-let y = 2;  // Les deux sont valides
+let a = 1
+let b = 2;  // Les deux sont valides
 ```
 
 ## Tests
