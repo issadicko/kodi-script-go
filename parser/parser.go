@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/kodi-script/kodi-go/ast"
-	"github.com/kodi-script/kodi-go/lexer"
-	"github.com/kodi-script/kodi-go/token"
+	"github.com/issadicko/kodi-script-go/ast"
+	"github.com/issadicko/kodi-script-go/lexer"
+	"github.com/issadicko/kodi-script-go/token"
 )
 
 // Precedence levels for operators

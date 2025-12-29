@@ -2,7 +2,7 @@
 package ast
 
 import (
-	"github.com/kodi-script/kodi-go/token"
+	"github.com/issadicko/kodi-script-go/token"
 )
 
 // Node is the base interface for all AST nodes.

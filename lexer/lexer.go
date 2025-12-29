@@ -2,7 +2,7 @@
 package lexer
 
 import (
-	"github.com/kodi-script/kodi-go/token"
+	"github.com/issadicko/kodi-script-go/token"
 )
 
 // Lexer tokenizes KodiScript source code.

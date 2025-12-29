@@ -2,10 +2,10 @@
 package kodi
 
 import (
-	"github.com/kodi-script/kodi-go/interpreter"
-	"github.com/kodi-script/kodi-go/lexer"
-	"github.com/kodi-script/kodi-go/natives"
-	"github.com/kodi-script/kodi-go/parser"
+	"github.com/issadicko/kodi-script-go/interpreter"
+	"github.com/issadicko/kodi-script-go/lexer"
+	"github.com/issadicko/kodi-script-go/natives"
+	"github.com/issadicko/kodi-script-go/parser"
 )
 
 // Script represents a compiled KodiScript program.

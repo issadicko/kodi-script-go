@@ -4,8 +4,8 @@ package interpreter
 import (
 	"fmt"
 
-	"github.com/kodi-script/kodi-go/ast"
-	"github.com/kodi-script/kodi-go/natives"
+	"github.com/issadicko/kodi-script-go/ast"
+	"github.com/issadicko/kodi-script-go/natives"
 )
 
 // Value represents a runtime value in KodiScript.

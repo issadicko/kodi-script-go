@@ -18,7 +18,7 @@ Imaginez : un admin qui configure des règles de validation, un workflow qui s'a
 ## Installation
 
 ```bash
-go get github.com/kodi-script/kodi-go
+go get github.com/issadicko/kodi-script-go
 ```
 
 ## Utilisation Rapide
@@ -28,7 +28,7 @@ package main
 
 import (
     "fmt"
-    kodi "github.com/kodi-script/kodi-go"
+    kodi "github.com/issadicko/kodi-script-go"
 )
 
 func main() {

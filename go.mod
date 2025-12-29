@@ -1,3 +1,3 @@
-module github.com/kodi-script/kodi-go
+module github.com/issadicko/kodi-script-go
 
 go 1.21
