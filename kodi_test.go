@@ -552,3 +552,71 @@ func TestArrayUtilityFunctions(t *testing.T) {
 		t.Errorf("slice failed: %v", sliced)
 	}
 }
+
+func TestForLoop(t *testing.T) {
+	// Test basic for loop with sum
+	vars := map[string]interface{}{
+		"numbers": []interface{}{float64(1), float64(2), float64(3), float64(4), float64(5)},
+	}
+
+	result := Run(`
+		let sum = 0
+		for (n in numbers) {
+			sum = sum + n
+		}
+		sum
+	`, vars)
+	if len(result.Errors) > 0 {
+		t.Fatalf("for loop errors: %v", result.Errors)
+	}
+	if result.Value != float64(15) {
+		t.Errorf("expected 15, got %v", result.Value)
+	}
+
+	// Test for loop with print
+	result = Run(`
+		for (item in numbers) {
+			print(item)
+		}
+	`, vars)
+	if len(result.Errors) > 0 {
+		t.Fatalf("for loop print errors: %v", result.Errors)
+	}
+	if len(result.Output) != 5 {
+		t.Errorf("expected 5 outputs, got %d", len(result.Output))
+	}
+
+	// Test for loop with objects
+	users := map[string]interface{}{
+		"users": []interface{}{
+			map[string]interface{}{"name": "Alice"},
+			map[string]interface{}{"name": "Bob"},
+		},
+	}
+	result = Run(`
+		for (user in users) {
+			print(user.name)
+		}
+	`, users)
+	if len(result.Errors) > 0 {
+		t.Fatalf("for loop objects errors: %v", result.Errors)
+	}
+	if len(result.Output) != 2 || result.Output[0] != "Alice" {
+		t.Errorf("expected Alice/Bob, got %v", result.Output)
+	}
+
+	// Test early return in for loop (simpler case)
+	result = Run(`
+let found = "no"
+for (n in numbers) {
+    found = n
+}
+return found
+`, vars)
+	if len(result.Errors) > 0 {
+		t.Fatalf("for loop return errors: %v", result.Errors)
+	}
+	if result.Value != float64(5) {
+		t.Errorf("expected 5, got %v", result.Value)
+	}
+}

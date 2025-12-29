@@ -195,6 +195,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseIfStatement()
 	case token.RETURN:
 		return p.parseReturnStatement()
+	case token.FOR:
+		return p.parseForStatement()
 	case token.IDENT:
 		if p.peekTokenIs(token.ASSIGN) {
 			return p.parseAssignment()
@@ -236,6 +238,46 @@ func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 
 	p.nextToken()
 	stmt.Value = p.parseExpression(LOWEST)
+
+	return stmt
+}
+
+// parseForStatement parses: for (variable in iterable) { body }
+func (p *Parser) parseForStatement() *ast.ForStatement {
+	stmt := &ast.ForStatement{Token: p.curToken}
+
+	// Expect (
+	if !p.expectPeek(token.LPAREN) {
+		return nil
+	}
+
+	// Expect identifier (loop variable)
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+	stmt.Variable = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	// Expect 'in'
+	if !p.expectPeek(token.IN) {
+		return nil
+	}
+
+	// Parse iterable expression
+	p.nextToken()
+	stmt.Iterable = p.parseExpression(LOWEST)
+
+	// Expect )
+	if !p.expectPeek(token.RPAREN) {
+		return nil
+	}
+
+	// Expect {
+	if !p.expectPeek(token.LBRACE) {
+		return nil
+	}
+
+	// Parse body
+	stmt.Body = p.parseBlockStatement()
 
 	return stmt
 }

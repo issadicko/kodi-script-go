@@ -141,9 +141,49 @@ func (i *Interpreter) evalStatement(stmt ast.Statement) (Value, error) {
 		}
 		return &ReturnValue{Value: val}, nil
 
+	case *ast.ForStatement:
+		return i.evalForStatement(s)
+
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}
+}
+
+func (i *Interpreter) evalForStatement(stmt *ast.ForStatement) (Value, error) {
+	// Evaluate the iterable
+	iterableVal, err := i.evalExpression(stmt.Iterable)
+	if err != nil {
+		return nil, err
+	}
+
+	// Must be an array
+	arr, ok := iterableVal.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("for-in requires an array, got %T", iterableVal)
+	}
+
+	var result Value
+	varName := stmt.Variable.Value
+
+	for _, item := range arr {
+		// Set loop variable in current environment
+		i.env.Set(varName, item)
+
+		// Execute body
+		val, err := i.evalBlockStatement(stmt.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		// Check for return
+		if rv, ok := val.(*ReturnValue); ok {
+			return rv, nil
+		}
+
+		result = val
+	}
+
+	return result, nil
 }
 
 func (i *Interpreter) evalIfStatement(stmt *ast.IfStatement) (Value, error) {

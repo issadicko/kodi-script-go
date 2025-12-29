@@ -92,6 +92,17 @@ type ReturnStatement struct {
 func (rs *ReturnStatement) statementNode()       {}
 func (rs *ReturnStatement) TokenLiteral() string { return rs.Token.Literal }
 
+// ForStatement represents: for (variable in iterable) { body }
+type ForStatement struct {
+	Token    token.Token     // the FOR token
+	Variable *Identifier     // loop variable
+	Iterable Expression      // expression that produces an array
+	Body     *BlockStatement // loop body
+}
+
+func (fs *ForStatement) statementNode()       {}
+func (fs *ForStatement) TokenLiteral() string { return fs.Token.Literal }
+
 // Identifier represents a variable name.
 type Identifier struct {
 	Token token.Token // the IDENT token

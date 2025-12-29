@@ -56,6 +56,8 @@ const (
 	FALSE  Type = "FALSE"
 	NULL   Type = "NULL"
 	RETURN Type = "RETURN"
+	FOR    Type = "FOR"
+	IN     Type = "IN"
 )
 
 // Token represents a single token with its type, literal value, and position.
@@ -75,6 +77,8 @@ var keywords = map[string]Type{
 	"false":  FALSE,
 	"null":   NULL,
 	"return": RETURN,
+	"for":    FOR,
+	"in":     IN,
 }
 
 // LookupIdent checks if an identifier is a keyword and returns the appropriate token type.
