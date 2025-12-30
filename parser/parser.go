@@ -70,6 +70,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(token.IDENT, p.parseIdentifier)
 	p.registerPrefix(token.NUMBER, p.parseNumberLiteral)
 	p.registerPrefix(token.STRING, p.parseStringLiteral)
+	p.registerPrefix(token.STRING_TEMPLATE, p.parseStringTemplate)
 	p.registerPrefix(token.TRUE, p.parseBooleanLiteral)
 	p.registerPrefix(token.FALSE, p.parseBooleanLiteral)
 	p.registerPrefix(token.NULL, p.parseNullLiteral)
@@ -404,6 +405,74 @@ func (p *Parser) parseNumberLiteral() ast.Expression {
 
 func (p *Parser) parseStringLiteral() ast.Expression {
 	return &ast.StringLiteral{Token: p.curToken, Value: p.curToken.Literal}
+}
+
+// parseStringTemplate parses a string template like "Hello ${name}!"
+// The literal contains the raw template with ${...} markers.
+// We parse it into alternating string parts and expressions.
+func (p *Parser) parseStringTemplate() ast.Expression {
+	template := &ast.StringTemplate{Token: p.curToken}
+	template.Parts = []ast.Expression{}
+
+	literal := p.curToken.Literal
+	i := 0
+
+	for i < len(literal) {
+		// Find next ${
+		start := i
+		for i < len(literal) && !(i+1 < len(literal) && literal[i] == '$' && literal[i+1] == '{') {
+			i++
+		}
+
+		// Add string part if non-empty
+		if i > start {
+			part := &ast.StringLiteral{
+				Token: token.Token{Type: token.STRING, Literal: literal[start:i]},
+				Value: literal[start:i],
+			}
+			template.Parts = append(template.Parts, part)
+		}
+
+		// If we found ${, parse the expression
+		if i+1 < len(literal) && literal[i] == '$' && literal[i+1] == '{' {
+			i += 2 // skip ${
+
+			// Find matching }
+			braceCount := 1
+			exprStart := i
+			for i < len(literal) && braceCount > 0 {
+				if literal[i] == '{' {
+					braceCount++
+				} else if literal[i] == '}' {
+					braceCount--
+				}
+				if braceCount > 0 {
+					i++
+				}
+			}
+
+			// Extract and parse the expression
+			exprStr := literal[exprStart:i]
+			if i < len(literal) {
+				i++ // skip closing }
+			}
+
+			// Create a new lexer and parser for the expression
+			exprLexer := lexer.New(exprStr)
+			exprParser := New(exprLexer)
+			expr := exprParser.parseExpression(LOWEST)
+
+			if len(exprParser.errors) > 0 {
+				p.errors = append(p.errors, exprParser.errors...)
+			}
+
+			if expr != nil {
+				template.Parts = append(template.Parts, expr)
+			}
+		}
+	}
+
+	return template
 }
 
 func (p *Parser) parseBooleanLiteral() ast.Expression {

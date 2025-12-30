@@ -130,6 +130,15 @@ type StringLiteral struct {
 func (sl *StringLiteral) expressionNode()      {}
 func (sl *StringLiteral) TokenLiteral() string { return sl.Token.Literal }
 
+// StringTemplate represents a template string: "Hello ${name}"
+type StringTemplate struct {
+	Token token.Token  // the STRING_TEMPLATE token
+	Parts []Expression // alternating StringLiteral and expressions
+}
+
+func (st *StringTemplate) expressionNode()      {}
+func (st *StringTemplate) TokenLiteral() string { return st.Token.Literal }
+
 // BooleanLiteral represents true or false.
 type BooleanLiteral struct {
 	Token token.Token

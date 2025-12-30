@@ -795,3 +795,83 @@ func TestUserFunctions(t *testing.T) {
 		t.Errorf("Recursion failed: %v", result.Value)
 	}
 }
+
+func TestStringTemplates(t *testing.T) {
+	// Test basic variable interpolation
+	result := Run(`
+	let name = "World"
+	"Hello ${name}!"
+	`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("String template basic errors: %v", result.Errors)
+	}
+	if result.Value != "Hello World!" {
+		t.Errorf("String template basic failed: expected 'Hello World!', got %v", result.Value)
+	}
+
+	// Test expression interpolation
+	result = Run(`"Result: ${2 + 3}"`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("String template expr errors: %v", result.Errors)
+	}
+	if result.Value != "Result: 5" {
+		t.Errorf("String template expr failed: expected 'Result: 5', got %v", result.Value)
+	}
+
+	// Test multiple interpolations
+	result = Run(`
+	let a = "Hello"
+	let b = "World"
+	"${a}, ${b}!"
+	`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("String template multi errors: %v", result.Errors)
+	}
+	if result.Value != "Hello, World!" {
+		t.Errorf("String template multi failed: expected 'Hello, World!', got %v", result.Value)
+	}
+
+	// Test with host variables
+	vars := map[string]interface{}{
+		"user": map[string]interface{}{
+			"name": "Alice",
+		},
+	}
+	result = Run(`"Welcome, ${user.name}!"`, vars)
+	if len(result.Errors) > 0 {
+		t.Fatalf("String template host var errors: %v", result.Errors)
+	}
+	if result.Value != "Welcome, Alice!" {
+		t.Errorf("String template host var failed: expected 'Welcome, Alice!', got %v", result.Value)
+	}
+
+	// Test null value in template
+	result = Run(`
+	let x = null
+	"Value is ${x}"
+	`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("String template null errors: %v", result.Errors)
+	}
+	if result.Value != "Value is null" {
+		t.Errorf("String template null failed: expected 'Value is null', got %v", result.Value)
+	}
+
+	// Test without interpolation (plain string)
+	result = Run(`"Hello World"`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("Plain string errors: %v", result.Errors)
+	}
+	if result.Value != "Hello World" {
+		t.Errorf("Plain string failed: expected 'Hello World', got %v", result.Value)
+	}
+
+	// Test escaped dollar sign
+	result = Run(`"Price is \$100"`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("Escaped $ errors: %v", result.Errors)
+	}
+	if result.Value != "Price is $100" {
+		t.Errorf("Escaped $ failed: expected 'Price is $100', got %v", result.Value)
+	}
+}

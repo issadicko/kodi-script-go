@@ -11,9 +11,10 @@ const (
 	NEWLINE Type = "NEWLINE"
 
 	// Identifiers and literals
-	IDENT  Type = "IDENT"  // variable names
-	NUMBER Type = "NUMBER" // 123, 45.67
-	STRING Type = "STRING" // "hello"
+	IDENT           Type = "IDENT"           // variable names
+	NUMBER          Type = "NUMBER"          // 123, 45.67
+	STRING          Type = "STRING"          // "hello"
+	STRING_TEMPLATE Type = "STRING_TEMPLATE" // "hello ${name}"
 
 	// Operators
 	ASSIGN   Type = "="
@@ -97,7 +98,7 @@ func LookupIdent(ident string) Type {
 // CanEndStatement returns true if this token type can end a statement (for ASI).
 func (t Type) CanEndStatement() bool {
 	switch t {
-	case IDENT, NUMBER, STRING, TRUE, FALSE, NULL, RPAREN, RBRACE, RBRACKET:
+	case IDENT, NUMBER, STRING, STRING_TEMPLATE, TRUE, FALSE, NULL, RPAREN, RBRACE, RBRACKET:
 		return true
 	default:
 		return false

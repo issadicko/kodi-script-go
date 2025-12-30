@@ -231,6 +231,28 @@ func (i *Interpreter) evalBlockStatement(block *ast.BlockStatement) (Value, erro
 	return result, nil
 }
 
+// evalStringTemplate evaluates a string template by evaluating each part
+// and concatenating the results into a single string.
+func (i *Interpreter) evalStringTemplate(tmpl *ast.StringTemplate) (Value, error) {
+	var result string
+
+	for _, part := range tmpl.Parts {
+		val, err := i.evalExpression(part)
+		if err != nil {
+			return nil, err
+		}
+
+		// Convert to string
+		if val == nil {
+			result += "null"
+		} else {
+			result += fmt.Sprintf("%v", val)
+		}
+	}
+
+	return result, nil
+}
+
 func (i *Interpreter) evalExpression(expr ast.Expression) (Value, error) {
 	switch e := expr.(type) {
 	case *ast.NumberLiteral:
@@ -238,6 +260,9 @@ func (i *Interpreter) evalExpression(expr ast.Expression) (Value, error) {
 
 	case *ast.StringLiteral:
 		return e.Value, nil
+
+	case *ast.StringTemplate:
+		return i.evalStringTemplate(e)
 
 	case *ast.BooleanLiteral:
 		return e.Value, nil

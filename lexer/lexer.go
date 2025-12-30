@@ -141,8 +141,13 @@ func (l *Lexer) NextToken() token.Token {
 	case '.':
 		tok = l.newToken(token.DOT, l.ch)
 	case '"':
-		tok.Type = token.STRING
-		tok.Literal = l.readString()
+		str, isTemplate := l.readString()
+		if isTemplate {
+			tok.Type = token.STRING_TEMPLATE
+		} else {
+			tok.Type = token.STRING
+		}
+		tok.Literal = str
 	case '\n':
 		// Check if previous token can end a statement (ASI)
 		if l.prevToken.Type.CanEndStatement() {
@@ -225,8 +230,10 @@ func (l *Lexer) readNumber() string {
 }
 
 // readString reads a string literal (with escape support).
-func (l *Lexer) readString() string {
+// Returns the string content and whether it contains template expressions.
+func (l *Lexer) readString() (string, bool) {
 	var result []byte
+	isTemplate := false
 	l.readChar() // skip opening quote
 	for l.ch != '"' && l.ch != 0 {
 		if l.ch == '\\' {
@@ -240,15 +247,22 @@ func (l *Lexer) readString() string {
 				result = append(result, '"')
 			case '\\':
 				result = append(result, '\\')
+			case '$':
+				result = append(result, '$')
 			default:
 				result = append(result, l.ch)
 			}
+		} else if l.ch == '$' && l.peekChar() == '{' {
+			// Template expression detected
+			isTemplate = true
+			result = append(result, '$', '{')
+			l.readChar() // consume $
 		} else {
 			result = append(result, l.ch)
 		}
 		l.readChar()
 	}
-	return string(result)
+	return string(result), isTemplate
 }
 
 func isLetter(ch byte) bool {
