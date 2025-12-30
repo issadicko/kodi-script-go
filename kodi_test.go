@@ -619,4 +619,59 @@ return found
 	if result.Value != float64(5) {
 		t.Errorf("expected 5, got %v", result.Value)
 	}
+
+	// Test if inside for loop - count evens
+	result = Run(`
+let count = 0
+for (n in numbers) {
+    if (n == 2) {
+        count = count + 1
+    }
+    if (n == 4) {
+        count = count + 1
+    }
+}
+count
+`, vars)
+	if len(result.Errors) > 0 {
+		t.Fatalf("for loop with if errors: %v", result.Errors)
+	}
+	if result.Value != float64(2) {
+		t.Errorf("expected 2, got %v", result.Value)
+	}
+
+	// Test conditional print inside for loop
+	result = Run(`
+for (n in numbers) {
+    if (n > 3) {
+        print(n)
+    }
+}
+`, vars)
+	if len(result.Errors) > 0 {
+		t.Fatalf("for loop conditional print errors: %v", result.Errors)
+	}
+	if len(result.Output) != 2 {
+		t.Errorf("expected 2 outputs (4 and 5), got %d: %v", len(result.Output), result.Output)
+	}
+
+	// Test if-else inside for loop
+	result = Run(`
+let big = 0
+let small = 0
+for (n in numbers) {
+    if (n > 3) {
+        big = big + 1
+    } else {
+        small = small + 1
+    }
+}
+big
+`, vars)
+	if len(result.Errors) > 0 {
+		t.Fatalf("for loop if-else errors: %v", result.Errors)
+	}
+	if result.Value != float64(2) {
+		t.Errorf("expected 2 (big count), got %v", result.Value)
+	}
 }

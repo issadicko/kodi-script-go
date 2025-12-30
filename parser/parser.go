@@ -331,7 +331,7 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 	block := &ast.BlockStatement{Token: p.curToken}
 	block.Statements = []ast.Statement{}
 
-	p.nextToken()
+	p.nextToken() // consume the opening brace
 
 	for !p.curTokenIs(token.RBRACE) && !p.curTokenIs(token.EOF) {
 		p.consumeEndOfStatement()
@@ -342,13 +342,11 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 		if stmt != nil {
 			block.Statements = append(block.Statements, stmt)
 		}
-		// Move to the next token after parsing a statement
-		if !p.curTokenIs(token.EOF) && !p.curTokenIs(token.RBRACE) &&
-			!p.curTokenIs(token.SEMICOLON) && !p.curTokenIs(token.NEWLINE) {
-			p.nextToken()
-		}
+		p.nextToken() // move past the statement
 		p.consumeEndOfStatement()
 	}
+
+	// Note: we leave curToken on RBRACE, the caller should advance if needed
 
 	return block
 }
