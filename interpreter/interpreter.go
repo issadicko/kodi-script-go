@@ -246,6 +246,39 @@ func (i *Interpreter) evalExpression(expr ast.Expression) (Value, error) {
 	case *ast.UnaryExpr:
 		return i.evalUnaryExpr(e)
 
+	case *ast.ArrayLiteral:
+		elements := make([]interface{}, len(e.Elements))
+		for idx, el := range e.Elements {
+			val, err := i.evalExpression(el)
+			if err != nil {
+				return nil, err
+			}
+			elements[idx] = val
+		}
+		return elements, nil
+
+	case *ast.ObjectLiteral:
+		pairs := make(map[string]interface{})
+		for key, valExpr := range e.Pairs {
+			val, err := i.evalExpression(valExpr)
+			if err != nil {
+				return nil, err
+			}
+			pairs[key] = val
+		}
+		return pairs, nil
+
+	case *ast.IndexExpr:
+		left, err := i.evalExpression(e.Left)
+		if err != nil {
+			return nil, err
+		}
+		index, err := i.evalExpression(e.Index)
+		if err != nil {
+			return nil, err
+		}
+		return i.evalIndexExpression(left, index)
+
 	case *ast.SafeAccessExpr:
 		return i.evalSafeAccess(e)
 
@@ -489,6 +522,47 @@ func (i *Interpreter) evalCallExpr(expr *ast.CallExpr) (Value, error) {
 	}
 
 	return fn(ifaceArgs...)
+}
+
+func (i *Interpreter) evalIndexExpression(left, index Value) (Value, error) {
+	switch l := left.(type) {
+	case []interface{}: // []Value is alias to []interface{}
+		return i.evalArrayIndexExpression(l, index)
+	case map[string]interface{}: // map[string]Value is alias to map[string]interface{}
+		return i.evalHashIndexExpression(l, index)
+	default:
+		return nil, fmt.Errorf("index operator not supported: %T", left)
+	}
+}
+
+func (i *Interpreter) evalArrayIndexExpression(array []interface{}, index Value) (Value, error) {
+	var idx int
+
+	switch iVal := index.(type) {
+	case int:
+		idx = iVal
+	case float64:
+		idx = int(iVal)
+	default:
+		return nil, fmt.Errorf("index must be a number")
+	}
+
+	if idx < 0 || idx >= len(array) {
+		return nil, nil // Return null for out of bounds
+	}
+	return array[idx], nil
+}
+
+func (i *Interpreter) evalHashIndexExpression(hash map[string]interface{}, index Value) (Value, error) {
+	key, ok := index.(string)
+	if !ok {
+		return nil, fmt.Errorf("property access must be a string")
+	}
+	val, ok := hash[key]
+	if !ok {
+		return nil, nil // Return null if key not found
+	}
+	return val, nil
 }
 
 // Utility functions

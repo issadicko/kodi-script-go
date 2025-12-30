@@ -42,10 +42,13 @@ const (
 	// Delimiters
 	COMMA     Type = ","
 	SEMICOLON Type = ";"
+	COLON     Type = ":"
 	LPAREN    Type = "("
 	RPAREN    Type = ")"
 	LBRACE    Type = "{"
 	RBRACE    Type = "}"
+	LBRACKET  Type = "["
+	RBRACKET  Type = "]"
 	DOT       Type = "."
 
 	// Keywords

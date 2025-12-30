@@ -41,6 +41,7 @@ var precedences = map[token.Type]int{
 	token.ASTERISK:    PRODUCT,
 	token.SLASH:       PRODUCT,
 	token.LPAREN:      CALL,
+	token.LBRACKET:    ACCESS,
 	token.DOT:         ACCESS,
 	token.SAFE_ACCESS: ACCESS,
 }
@@ -75,6 +76,8 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(token.MINUS, p.parsePrefixExpression)
 	p.registerPrefix(token.NOT, p.parsePrefixExpression)
 	p.registerPrefix(token.LPAREN, p.parseGroupedExpression)
+	p.registerPrefix(token.LBRACKET, p.parseArrayLiteral)
+	p.registerPrefix(token.LBRACE, p.parseObjectLiteral)
 
 	p.infixParseFns = make(map[token.Type]infixParseFn)
 	p.registerInfix(token.PLUS, p.parseInfixExpression)
@@ -93,6 +96,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerInfix(token.DOT, p.parsePropertyAccess)
 	p.registerInfix(token.SAFE_ACCESS, p.parseSafeAccess)
 	p.registerInfix(token.LPAREN, p.parseCallExpression)
+	p.registerInfix(token.LBRACKET, p.parseIndexExpression)
 
 	// Read two tokens to initialize curToken and peekToken
 	p.nextToken()
@@ -427,6 +431,93 @@ func (p *Parser) parseGroupedExpression() ast.Expression {
 	exp := p.parseExpression(LOWEST)
 
 	if !p.expectPeek(token.RPAREN) {
+		return nil
+	}
+
+	return exp
+}
+
+func (p *Parser) parseArrayLiteral() ast.Expression {
+	array := &ast.ArrayLiteral{Token: p.curToken}
+
+	array.Elements = p.parseExpressionList(token.RBRACKET)
+
+	return array
+}
+
+func (p *Parser) parseExpressionList(end token.Type) []ast.Expression {
+	list := []ast.Expression{}
+
+	if p.peekTokenIs(end) {
+		p.nextToken()
+		return list
+	}
+
+	p.nextToken()
+	list = append(list, p.parseExpression(LOWEST))
+
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken()
+		p.nextToken()
+		list = append(list, p.parseExpression(LOWEST))
+	}
+
+	if !p.expectPeek(end) {
+		return nil
+	}
+
+	return list
+}
+
+func (p *Parser) parseObjectLiteral() ast.Expression {
+	object := &ast.ObjectLiteral{Token: p.curToken}
+	object.Pairs = make(map[string]ast.Expression)
+
+	if p.peekTokenIs(token.RBRACE) {
+		p.nextToken()
+		return object
+	}
+
+	for !p.peekTokenIs(token.RBRACE) {
+		p.nextToken()
+
+		// Support both string "key" and identifier key
+		var key string
+		if p.curTokenIs(token.STRING) || p.curTokenIs(token.IDENT) {
+			key = p.curToken.Literal
+		} else {
+			p.errors = append(p.errors, "expected string or identifier as object key")
+			return nil
+		}
+
+		if !p.expectPeek(token.COLON) {
+			return nil
+		}
+
+		p.nextToken()
+		value := p.parseExpression(LOWEST)
+
+		object.Pairs[key] = value
+
+		if !p.peekTokenIs(token.RBRACE) && !p.expectPeek(token.COMMA) {
+			return nil
+		}
+	}
+
+	if !p.expectPeek(token.RBRACE) {
+		return nil
+	}
+
+	return object
+}
+
+func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
+	exp := &ast.IndexExpr{Token: p.curToken, Left: left}
+
+	p.nextToken()
+	exp.Index = p.parseExpression(LOWEST)
+
+	if !p.expectPeek(token.RBRACKET) {
 		return nil
 	}
 

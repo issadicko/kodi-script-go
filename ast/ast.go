@@ -147,6 +147,34 @@ type NullLiteral struct {
 func (nl *NullLiteral) expressionNode()      {}
 func (nl *NullLiteral) TokenLiteral() string { return nl.Token.Literal }
 
+// ArrayLiteral represents an array: [elem1, elem2, ...]
+type ArrayLiteral struct {
+	Token    token.Token  // the '[' token
+	Elements []Expression // array elements
+}
+
+func (al *ArrayLiteral) expressionNode()      {}
+func (al *ArrayLiteral) TokenLiteral() string { return al.Token.Literal }
+
+// ObjectLiteral represents an object: {key: value, ...}
+type ObjectLiteral struct {
+	Token token.Token           // the '{' token
+	Pairs map[string]Expression // key-value pairs
+}
+
+func (ol *ObjectLiteral) expressionNode()      {}
+func (ol *ObjectLiteral) TokenLiteral() string { return ol.Token.Literal }
+
+// IndexExpr represents array/object index access: arr[0] or obj["key"]
+type IndexExpr struct {
+	Token token.Token // the '[' token
+	Left  Expression  // the array or object
+	Index Expression  // the index or key
+}
+
+func (ie *IndexExpr) expressionNode()      {}
+func (ie *IndexExpr) TokenLiteral() string { return ie.Token.Literal }
+
 // BinaryExpr represents a binary operation: left op right
 type BinaryExpr struct {
 	Token    token.Token // the operator token

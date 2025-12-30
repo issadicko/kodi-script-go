@@ -675,3 +675,54 @@ big
 		t.Errorf("expected 2 (big count), got %v", result.Value)
 	}
 }
+
+func TestArrayAndObjectLiterals(t *testing.T) {
+	// Test array literal
+	result := Run(`let arr = [1, 2, 3]; arr`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("Array literal errors: %v", result.Errors)
+	}
+	arr, ok := result.Value.([]interface{})
+	if !ok {
+		t.Fatalf("Expected array, got %T", result.Value)
+	}
+	if len(arr) != 3 || arr[0] != float64(1) {
+		t.Errorf("Array literal failed: %v", arr)
+	}
+
+	// Test array index
+	result = Run(`let arr = [10, 20, 30]; arr[1]`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("Array index errors: %v", result.Errors)
+	}
+	if result.Value != float64(20) {
+		t.Errorf("Array index failed: %v", result.Value)
+	}
+
+	// Test object literal
+	result = Run(`let obj = {name: "Kodi", age: 10}; obj["name"]`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("Object literal errors: %v", result.Errors)
+	}
+	if result.Value != "Kodi" {
+		t.Errorf("Object literal failed: %v", result.Value)
+	}
+
+	// Test object literal with identifier keys
+	result = Run(`let obj = {name: "Kodi", age: 10}; obj["age"]`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("Object literal identifier key errors: %v", result.Errors)
+	}
+	if result.Value != float64(10) {
+		t.Errorf("Object literal identifier key failed: %v", result.Value)
+	}
+
+	// Test nested
+	result = Run(`let data = {users: [{name: "Alice"}]}; data["users"][0]["name"]`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("Nested access errors: %v", result.Errors)
+	}
+	if result.Value != "Alice" {
+		t.Errorf("Nested access failed: %v", result.Value)
+	}
+}
