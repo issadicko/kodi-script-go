@@ -16,6 +16,18 @@ type ReturnValue struct {
 	Value Value
 }
 
+// Function represents a user-defined function.
+type Function struct {
+	Parameters []*ast.Identifier
+	Body       *ast.BlockStatement
+	Env        *Environment
+}
+
+// NativeFunction wraps a built-in function.
+type NativeFunction struct {
+	Fn natives.NativeFunc
+}
+
 // Environment holds variable bindings.
 type Environment struct {
 	store  map[string]Value
@@ -235,10 +247,16 @@ func (i *Interpreter) evalExpression(expr ast.Expression) (Value, error) {
 
 	case *ast.Identifier:
 		val, ok := i.env.Get(e.Value)
-		if !ok {
-			return nil, fmt.Errorf("undefined variable: %s", e.Value)
+		if ok {
+			return val, nil
 		}
-		return val, nil
+		if fn := i.natives.Get(e.Value); fn != nil {
+			return &NativeFunction{Fn: fn}, nil
+		}
+		return nil, fmt.Errorf("undefined variable: %s", e.Value)
+
+	case *ast.FunctionLiteral:
+		return &Function{Parameters: e.Parameters, Body: e.Body, Env: i.env}, nil
 
 	case *ast.BinaryExpr:
 		return i.evalBinaryExpr(e)
@@ -485,13 +503,28 @@ func (i *Interpreter) evalPropertyAccess(expr *ast.PropertyAccessExpr) (Value, e
 }
 
 func (i *Interpreter) evalCallExpr(expr *ast.CallExpr) (Value, error) {
-	// Get function name
-	ident, ok := expr.Function.(*ast.Identifier)
-	if !ok {
-		return nil, fmt.Errorf("expected function identifier")
+	// Special handling for print (keep it special to capture output in env)
+	if ident, ok := expr.Function.(*ast.Identifier); ok && ident.Value == "print" {
+		args := make([]Value, len(expr.Arguments))
+		for idx, arg := range expr.Arguments {
+			val, err := i.evalExpression(arg)
+			if err != nil {
+				return nil, err
+			}
+			args[idx] = val
+		}
+
+		for _, arg := range args {
+			i.env.AddOutput(fmt.Sprintf("%v", arg))
+		}
+		return nil, nil
 	}
 
-	// Evaluate arguments
+	function, err := i.evalExpression(expr.Function)
+	if err != nil {
+		return nil, err
+	}
+
 	args := make([]Value, len(expr.Arguments))
 	for idx, arg := range expr.Arguments {
 		val, err := i.evalExpression(arg)
@@ -501,27 +534,40 @@ func (i *Interpreter) evalCallExpr(expr *ast.CallExpr) (Value, error) {
 		args[idx] = val
 	}
 
-	// Handle print specially (capture output)
-	if ident.Value == "print" {
-		for _, arg := range args {
-			i.env.AddOutput(fmt.Sprintf("%v", arg))
+	return i.applyFunction(function, args)
+}
+
+func (i *Interpreter) applyFunction(fn Value, args []Value) (Value, error) {
+	switch function := fn.(type) {
+	case *Function:
+		extendedEnv := NewEnclosedEnvironment(function.Env)
+		for idx, param := range function.Parameters {
+			if idx < len(args) {
+				extendedEnv.Set(param.Value, args[idx])
+			}
 		}
-		return nil, nil
-	}
+		savedEnv := i.env
+		i.env = extendedEnv
+		val, err := i.evalBlockStatement(function.Body)
+		i.env = savedEnv // Restore env
+		if err != nil {
+			return nil, err
+		}
+		if rv, ok := val.(*ReturnValue); ok {
+			return rv.Value, nil
+		}
+		return val, nil
 
-	// Look up native function
-	fn := i.natives.Get(ident.Value)
-	if fn == nil {
-		return nil, fmt.Errorf("undefined function: %s", ident.Value)
-	}
+	case *NativeFunction:
+		ifaceArgs := make([]interface{}, len(args))
+		for i, arg := range args {
+			ifaceArgs[i] = arg
+		}
+		return function.Fn(ifaceArgs...)
 
-	// Convert []Value to []interface{} for native function call
-	ifaceArgs := make([]interface{}, len(args))
-	for i, arg := range args {
-		ifaceArgs[i] = arg
+	default:
+		return nil, fmt.Errorf("not a function: %T", fn)
 	}
-
-	return fn(ifaceArgs...)
 }
 
 func (i *Interpreter) evalIndexExpression(left, index Value) (Value, error) {

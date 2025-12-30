@@ -165,6 +165,16 @@ type ObjectLiteral struct {
 func (ol *ObjectLiteral) expressionNode()      {}
 func (ol *ObjectLiteral) TokenLiteral() string { return ol.Token.Literal }
 
+// FunctionLiteral represents a function definition: fn(x, y) { ... }
+type FunctionLiteral struct {
+	Token      token.Token // The 'fn' token
+	Parameters []*Identifier
+	Body       *BlockStatement
+}
+
+func (fl *FunctionLiteral) expressionNode()      {}
+func (fl *FunctionLiteral) TokenLiteral() string { return fl.Token.Literal }
+
 // IndexExpr represents array/object index access: arr[0] or obj["key"]
 type IndexExpr struct {
 	Token token.Token // the '[' token

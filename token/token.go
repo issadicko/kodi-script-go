@@ -61,6 +61,7 @@ const (
 	RETURN Type = "RETURN"
 	FOR    Type = "FOR"
 	IN     Type = "IN"
+	FN     Type = "FN"
 )
 
 // Token represents a single token with its type, literal value, and position.
@@ -82,6 +83,7 @@ var keywords = map[string]Type{
 	"return": RETURN,
 	"for":    FOR,
 	"in":     IN,
+	"fn":     FN,
 }
 
 // LookupIdent checks if an identifier is a keyword and returns the appropriate token type.
@@ -95,7 +97,7 @@ func LookupIdent(ident string) Type {
 // CanEndStatement returns true if this token type can end a statement (for ASI).
 func (t Type) CanEndStatement() bool {
 	switch t {
-	case IDENT, NUMBER, STRING, TRUE, FALSE, NULL, RPAREN, RBRACE:
+	case IDENT, NUMBER, STRING, TRUE, FALSE, NULL, RPAREN, RBRACE, RBRACKET:
 		return true
 	default:
 		return false

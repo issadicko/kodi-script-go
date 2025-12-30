@@ -726,3 +726,72 @@ func TestArrayAndObjectLiterals(t *testing.T) {
 		t.Errorf("Nested access failed: %v", result.Value)
 	}
 }
+
+func TestUserFunctions(t *testing.T) {
+	// 1. Basic function call with implicit return (last statement)
+	result := Run(`
+	let add = fn(x, y) { x + y };
+	add(5, 5)
+	`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("Function call errors: %v", result.Errors)
+	}
+	if result.Value != float64(10) {
+		t.Errorf("Function call failed: %v", result.Value)
+	}
+
+	// 2. Explicit return
+	result = Run(`
+	let add = fn(x, y) { return x + y; };
+	add(10, 10)
+	`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("Explicit return errors: %v", result.Errors)
+	}
+	if result.Value != float64(20) {
+		t.Errorf("Explicit return failed: %v", result.Value)
+	}
+
+	// 3. Closure (access outer variable)
+	result = Run(`
+	let newAdder = fn(x) {
+		fn(y) { x + y }
+	};
+	let addTwo = newAdder(2);
+	addTwo(2)
+	`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("Closure errors: %v", result.Errors)
+	}
+	if result.Value != float64(4) {
+		t.Errorf("Closure failed expected 4, got: %v", result.Value)
+	}
+
+	// 4. Higher order function
+	result = Run(`
+	let apply = fn(f, x) { f(x) };
+	let double = fn(x) { x * 2 };
+	apply(double, 5)
+	`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("Higher order function errors: %v", result.Errors)
+	}
+	if result.Value != float64(10) {
+		t.Errorf("Higher order function failed: %v", result.Value)
+	}
+
+	// 5. Recursion (factorial) bound to variable
+	result = Run(`
+	let fact = fn(n) {
+		if (n == 0) { return 1 }
+		return n * fact(n - 1)
+	};
+	fact(5)
+	`, nil)
+	if len(result.Errors) > 0 {
+		t.Fatalf("Recursion errors: %v", result.Errors)
+	}
+	if result.Value != float64(120) {
+		t.Errorf("Recursion failed: %v", result.Value)
+	}
+}
