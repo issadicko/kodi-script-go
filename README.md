@@ -1,6 +1,9 @@
 # KodiScript Go SDK
 
-Un interpréteur KodiScript v1.2 pour Go, conçu comme module à intégrer dans vos projets.
+[![Go Reference](https://pkg.go.dev/badge/github.com/issadicko/kodi-script-go.svg)](https://pkg.go.dev/github.com/issadicko/kodi-script-go)
+[![Release](https://img.shields.io/github/v/release/issadicko/kodi-script-go)](https://github.com/issadicko/kodi-script-go/releases)
+
+A lightweight, embeddable scripting language interpreter for Go applications.
 
 ## 🎯 Pourquoi KodiScript ?
 
@@ -18,7 +21,7 @@ Imaginez : un admin qui configure des règles de validation, un workflow qui s'a
 ## Installation
 
 ```bash
-go get github.com/issadicko/kodi-script-go
+go get github.com/issadicko/kodi-script-go@v0.0.1
 ```
 
 ## Utilisation Rapide
@@ -197,3 +200,15 @@ let b = 2;  // Les deux sont valides
 ```bash
 go test ./... -v
 ```
+
+## Other Implementations
+
+| Language | Package |
+|----------|---------|  
+| **Kotlin** | [Maven Central](https://central.sonatype.com/artifact/io.github.issadicko/kodi-script) |
+| **Dart** | [pub.dev](https://pub.dev/packages/kodi_script) |
+| **TypeScript** | [npm](https://www.npmjs.com/package/@issadicko/kodi-script) |
+
+## License
+
+MIT
