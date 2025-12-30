@@ -5,6 +5,8 @@
 
 A lightweight, embeddable scripting language interpreter for Go applications.
 
+📖 **Documentation complète** : [docs-kodiscript.dickode.net](https://docs-kodiscript.dickode.net/)
+
 ## 🎯 Pourquoi KodiScript ?
 
 Vous avez déjà eu besoin d'exécuter du code dynamiquement dans votre application ? De laisser vos utilisateurs (admins) définir des règles métier sans recompiler tout le projet ? C'est exactement pour ça que KodiScript existe.
@@ -147,11 +149,16 @@ result := kodi.Run(`
 | `isString(val)` | Vérifie si chaîne |
 | `isBool(val)` | Vérifie si booléen |
 
-## Fonctions Personnalisées
+## 🔌 Extensibilité
+
+KodiScript est conçu pour être **extensible**. Vous pouvez enrichir le langage en ajoutant vos propres fonctions natives, permettant aux scripts d'interagir avec votre système.
+
+### Fonctions personnalisées
 
 ```go
 script := kodi.New(`
     let result = myCustomFunc("hello")
+    print(result)
 `)
 
 script.RegisterFunction("myCustomFunc", func(args ...interface{}) (interface{}, error) {
@@ -160,6 +167,47 @@ script.RegisterFunction("myCustomFunc", func(args ...interface{}) (interface{}, 
 
 result := script.Execute()
 ```
+
+### Exemple : intégration métier
+
+```go
+script := kodi.New(`
+    let user = fetchUser(userId)
+    let discount = calculateDiscount(user.tier, orderTotal)
+    
+    if (discount > 0) {
+        sendNotification(user.email, "Vous avez " + discount + "% de réduction!")
+    }
+    
+    return discount
+`)
+
+script.RegisterFunction("fetchUser", func(args ...interface{}) (interface{}, error) {
+    id := args[0].(float64)
+    // Appel à votre base de données
+    return map[string]interface{}{
+        "id": id, "name": "Alice", "tier": "gold", "email": "alice@example.com",
+    }, nil
+})
+
+script.RegisterFunction("calculateDiscount", func(args ...interface{}) (interface{}, error) {
+    tier := args[0].(string)
+    switch tier {
+    case "gold": return 20, nil
+    case "silver": return 10, nil
+    default: return 5, nil
+    }
+})
+
+script.RegisterFunction("sendNotification", func(args ...interface{}) (interface{}, error) {
+    // Envoyer une notification
+    return true, nil
+})
+
+result := script.WithVariable("userId", 123).WithVariable("orderTotal", 100).Execute()
+```
+
+Cela permet à vos utilisateurs d'écrire des scripts puissants tout en gardant le contrôle sur les fonctionnalités exposées.
 
 ## Syntaxe KodiScript v1.2
 
