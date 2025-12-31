@@ -411,3 +411,103 @@ func TestUnknownStatementType(t *testing.T) {
 		t.Errorf("empty program should not error: %v", err)
 	}
 }
+
+func TestMapFunction(t *testing.T) {
+	result, err, _ := parseAndEval(`
+		let arr = [1, 2, 3]
+		let doubled = map(arr, fn(x) { x * 2 })
+		doubled
+	`, nil)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	arr := result.([]interface{})
+	if len(arr) != 3 || arr[0] != float64(2) || arr[1] != float64(4) || arr[2] != float64(6) {
+		t.Errorf("expected [2, 4, 6], got %v", arr)
+	}
+}
+
+func TestFilterFunction(t *testing.T) {
+	result, err, _ := parseAndEval(`
+		let arr = [1, 2, 3, 4, 5, 6]
+		let evens = filter(arr, fn(x) { x % 2 == 0 })
+		evens
+	`, nil)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	arr := result.([]interface{})
+	if len(arr) != 3 || arr[0] != float64(2) || arr[1] != float64(4) || arr[2] != float64(6) {
+		t.Errorf("expected [2, 4, 6], got %v", arr)
+	}
+}
+
+func TestReduceFunction(t *testing.T) {
+	result, err, _ := parseAndEval(`
+		let arr = [1, 2, 3, 4]
+		let sum = reduce(arr, fn(acc, x) { acc + x }, 0)
+		sum
+	`, nil)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if result != float64(10) {
+		t.Errorf("expected 10, got %v", result)
+	}
+}
+
+func TestFindFunction(t *testing.T) {
+	result, err, _ := parseAndEval(`
+		let arr = [1, 2, 3, 4, 5]
+		find(arr, fn(x) { x > 3 })
+	`, nil)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if result != float64(4) {
+		t.Errorf("expected 4, got %v", result)
+	}
+}
+
+func TestFindIndexFunction(t *testing.T) {
+	result, err, _ := parseAndEval(`
+		let arr = [10, 20, 30, 40]
+		findIndex(arr, fn(x) { x > 25 })
+	`, nil)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if result != float64(2) {
+		t.Errorf("expected 2, got %v", result)
+	}
+}
+
+func TestPadLeftFunction(t *testing.T) {
+	result, err, _ := parseAndEval(`padLeft("5", 3, "0")`, nil)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if result != "005" {
+		t.Errorf("expected '005', got %v", result)
+	}
+}
+
+func TestPadRightFunction(t *testing.T) {
+	result, err, _ := parseAndEval(`padRight("hi", 5, "!")`, nil)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if result != "hi!!!" {
+		t.Errorf("expected 'hi!!!', got %v", result)
+	}
+}
+
+func TestRepeatFunction(t *testing.T) {
+	result, err, _ := parseAndEval(`repeat("ab", 3)`, nil)
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if result != "ababab" {
+		t.Errorf("expected 'ababab', got %v", result)
+	}
+}

@@ -10,9 +10,10 @@ import (
 
 // Script represents a compiled KodiScript program.
 type Script struct {
-	source  string
-	interp  *interpreter.Interpreter
-	natives *natives.Registry
+	source      string
+	interp      *interpreter.Interpreter
+	natives     *natives.Registry
+	silentPrint bool
 }
 
 // Result represents the result of script execution.
@@ -33,6 +34,12 @@ func New(source string) *Script {
 // WithVariables injects host variables into the script context.
 func (s *Script) WithVariables(vars map[string]interface{}) *Script {
 	s.interp = interpreter.NewWithEnv(vars)
+	return s
+}
+
+// SilentPrint disables console output for print() calls.
+func (s *Script) SilentPrint(silent bool) *Script {
+	s.silentPrint = silent
 	return s
 }
 

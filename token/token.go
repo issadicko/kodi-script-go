@@ -22,6 +22,7 @@ const (
 	MINUS    Type = "-"
 	ASTERISK Type = "*"
 	SLASH    Type = "/"
+	PERCENT  Type = "%"
 
 	// Comparison
 	EQ     Type = "=="
@@ -108,7 +109,7 @@ func (t Type) CanEndStatement() bool {
 // IsOperatorContinuation returns true if this token type indicates the statement continues.
 func (t Type) IsOperatorContinuation() bool {
 	switch t {
-	case PLUS, MINUS, ASTERISK, SLASH, AND, OR, EQ, NOT_EQ, LT, GT, LT_EQ, GT_EQ, SAFE_ACCESS, ELVIS, DOT, COMMA:
+	case PLUS, MINUS, ASTERISK, SLASH, PERCENT, AND, OR, EQ, NOT_EQ, LT, GT, LT_EQ, GT_EQ, SAFE_ACCESS, ELVIS, DOT, COMMA:
 		return true
 	default:
 		return false

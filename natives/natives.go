@@ -62,6 +62,9 @@ func (r *Registry) registerBuiltins() {
 	r.funcs["startsWith"] = nativeStartsWith
 	r.funcs["endsWith"] = nativeEndsWith
 	r.funcs["indexOf"] = nativeIndexOf
+	r.funcs["padLeft"] = nativePadLeft
+	r.funcs["padRight"] = nativePadRight
+	r.funcs["repeat"] = nativeRepeat
 
 	// JSON functions
 	r.funcs["jsonParse"] = nativeJsonParse
@@ -356,6 +359,67 @@ func nativeIndexOf(args ...interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("indexOf requires a string as second argument")
 	}
 	return float64(strings.Index(s, substr)), nil
+}
+
+func nativePadLeft(args ...interface{}) (interface{}, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("padLeft requires at least 2 arguments")
+	}
+	s := fmt.Sprintf("%v", args[0])
+	length := int(asFloat(args[1]))
+	padChar := " "
+	if len(args) > 2 && args[2] != nil {
+		padChar = fmt.Sprintf("%v", args[2])
+		if len(padChar) == 0 {
+			padChar = " "
+		}
+	}
+	for len(s) < length {
+		s = padChar[:1] + s
+	}
+	return s, nil
+}
+
+func nativePadRight(args ...interface{}) (interface{}, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("padRight requires at least 2 arguments")
+	}
+	s := fmt.Sprintf("%v", args[0])
+	length := int(asFloat(args[1]))
+	padChar := " "
+	if len(args) > 2 && args[2] != nil {
+		padChar = fmt.Sprintf("%v", args[2])
+		if len(padChar) == 0 {
+			padChar = " "
+		}
+	}
+	for len(s) < length {
+		s = s + padChar[:1]
+	}
+	return s, nil
+}
+
+func nativeRepeat(args ...interface{}) (interface{}, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("repeat requires 2 arguments")
+	}
+	s := fmt.Sprintf("%v", args[0])
+	count := int(asFloat(args[1]))
+	if count < 0 {
+		count = 0
+	}
+	return strings.Repeat(s, count), nil
+}
+
+func asFloat(v interface{}) float64 {
+	switch val := v.(type) {
+	case float64:
+		return val
+	case int:
+		return float64(val)
+	default:
+		return 0
+	}
 }
 
 // ============ JSON functions ============

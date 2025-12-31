@@ -3,6 +3,7 @@ package interpreter
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/issadicko/kodi-script-go/ast"
 	"github.com/issadicko/kodi-script-go/natives"
@@ -382,6 +383,8 @@ func (i *Interpreter) evalBinaryExpr(expr *ast.BinaryExpr) (Value, error) {
 		return i.evalArithmetic(left, right, "*")
 	case "/":
 		return i.evalArithmetic(left, right, "/")
+	case "%":
+		return i.evalArithmetic(left, right, "%")
 	case "==":
 		return left == right, nil
 	case "!=":
@@ -435,6 +438,11 @@ func (i *Interpreter) evalArithmetic(left, right Value, op string) (Value, error
 			return nil, fmt.Errorf("division by zero")
 		}
 		return leftNum / rightNum, nil
+	case "%":
+		if rightNum == 0 {
+			return nil, fmt.Errorf("modulo by zero")
+		}
+		return math.Mod(leftNum, rightNum), nil
 	}
 	return nil, fmt.Errorf("unknown arithmetic operator: %s", op)
 }
@@ -545,6 +553,22 @@ func (i *Interpreter) evalCallExpr(expr *ast.CallExpr) (Value, error) {
 			i.env.AddOutput(output)
 		}
 		return nil, nil
+	}
+
+	// Special handling for higher-order array functions
+	if ident, ok := expr.Function.(*ast.Identifier); ok {
+		switch ident.Value {
+		case "map":
+			return i.evalMapFunction(expr)
+		case "filter":
+			return i.evalFilterFunction(expr)
+		case "reduce":
+			return i.evalReduceFunction(expr)
+		case "find":
+			return i.evalFindFunction(expr)
+		case "findIndex":
+			return i.evalFindIndexFunction(expr)
+		}
 	}
 
 	function, err := i.evalExpression(expr.Function)
@@ -660,4 +684,163 @@ func toNumber(val Value) (float64, bool) {
 		return float64(v), true
 	}
 	return 0, false
+}
+
+// ============ Higher-order array functions ============
+
+func (i *Interpreter) evalMapFunction(expr *ast.CallExpr) (Value, error) {
+	if len(expr.Arguments) < 2 {
+		return nil, fmt.Errorf("map requires 2 arguments: array and function")
+	}
+
+	arrVal, err := i.evalExpression(expr.Arguments[0])
+	if err != nil {
+		return nil, err
+	}
+	arr, ok := arrVal.([]interface{})
+	if !ok {
+		return []interface{}{}, nil
+	}
+
+	fnVal, err := i.evalExpression(expr.Arguments[1])
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]interface{}, len(arr))
+	for idx, item := range arr {
+		val, err := i.applyFunction(fnVal, []Value{item, float64(idx)})
+		if err != nil {
+			return nil, err
+		}
+		result[idx] = val
+	}
+	return result, nil
+}
+
+func (i *Interpreter) evalFilterFunction(expr *ast.CallExpr) (Value, error) {
+	if len(expr.Arguments) < 2 {
+		return nil, fmt.Errorf("filter requires 2 arguments: array and function")
+	}
+
+	arrVal, err := i.evalExpression(expr.Arguments[0])
+	if err != nil {
+		return nil, err
+	}
+	arr, ok := arrVal.([]interface{})
+	if !ok {
+		return []interface{}{}, nil
+	}
+
+	fnVal, err := i.evalExpression(expr.Arguments[1])
+	if err != nil {
+		return nil, err
+	}
+
+	result := []interface{}{}
+	for idx, item := range arr {
+		val, err := i.applyFunction(fnVal, []Value{item, float64(idx)})
+		if err != nil {
+			return nil, err
+		}
+		if isTruthy(val) {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+func (i *Interpreter) evalReduceFunction(expr *ast.CallExpr) (Value, error) {
+	if len(expr.Arguments) < 3 {
+		return nil, fmt.Errorf("reduce requires 3 arguments: array, function, and initial value")
+	}
+
+	arrVal, err := i.evalExpression(expr.Arguments[0])
+	if err != nil {
+		return nil, err
+	}
+	arr, ok := arrVal.([]interface{})
+	if !ok {
+		return nil, nil
+	}
+
+	fnVal, err := i.evalExpression(expr.Arguments[1])
+	if err != nil {
+		return nil, err
+	}
+
+	accumulator, err := i.evalExpression(expr.Arguments[2])
+	if err != nil {
+		return nil, err
+	}
+
+	for idx, item := range arr {
+		accumulator, err = i.applyFunction(fnVal, []Value{accumulator, item, float64(idx)})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return accumulator, nil
+}
+
+func (i *Interpreter) evalFindFunction(expr *ast.CallExpr) (Value, error) {
+	if len(expr.Arguments) < 2 {
+		return nil, fmt.Errorf("find requires 2 arguments: array and function")
+	}
+
+	arrVal, err := i.evalExpression(expr.Arguments[0])
+	if err != nil {
+		return nil, err
+	}
+	arr, ok := arrVal.([]interface{})
+	if !ok {
+		return nil, nil
+	}
+
+	fnVal, err := i.evalExpression(expr.Arguments[1])
+	if err != nil {
+		return nil, err
+	}
+
+	for idx, item := range arr {
+		val, err := i.applyFunction(fnVal, []Value{item, float64(idx)})
+		if err != nil {
+			return nil, err
+		}
+		if isTruthy(val) {
+			return item, nil
+		}
+	}
+	return nil, nil
+}
+
+func (i *Interpreter) evalFindIndexFunction(expr *ast.CallExpr) (Value, error) {
+	if len(expr.Arguments) < 2 {
+		return nil, fmt.Errorf("findIndex requires 2 arguments: array and function")
+	}
+
+	arrVal, err := i.evalExpression(expr.Arguments[0])
+	if err != nil {
+		return nil, err
+	}
+	arr, ok := arrVal.([]interface{})
+	if !ok {
+		return float64(-1), nil
+	}
+
+	fnVal, err := i.evalExpression(expr.Arguments[1])
+	if err != nil {
+		return nil, err
+	}
+
+	for idx, item := range arr {
+		val, err := i.applyFunction(fnVal, []Value{item, float64(idx)})
+		if err != nil {
+			return nil, err
+		}
+		if isTruthy(val) {
+			return float64(idx), nil
+		}
+	}
+	return float64(-1), nil
 }
