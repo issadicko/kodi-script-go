@@ -42,17 +42,15 @@ func hash(source string) string {
 func (c *ASTCache) Get(source string) (*ast.Program, bool) {
 	key := hash(source)
 
-	c.mu.RLock()
-	elem, ok := c.items[key]
-	c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
+	elem, ok := c.items[key]
 	if !ok {
 		return nil, false
 	}
 
-	c.mu.Lock()
 	c.order.MoveToFront(elem)
-	c.mu.Unlock()
 
 	return elem.Value.(*cacheEntry).program, true
 }
