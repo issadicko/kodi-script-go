@@ -74,26 +74,33 @@ type Token struct {
 	Column  int
 }
 
-// keywords maps keyword strings to their token types.
-var keywords = map[string]Type{
-	"let":    LET,
-	"if":     IF,
-	"else":   ELSE,
-	"true":   TRUE,
-	"false":  FALSE,
-	"null":   NULL,
-	"return": RETURN,
-	"for":    FOR,
-	"in":     IN,
-	"fn":     FN,
-}
-
 // LookupIdent checks if an identifier is a keyword and returns the appropriate token type.
+// Uses switch statement for better performance than map lookup.
 func LookupIdent(ident string) Type {
-	if tok, ok := keywords[ident]; ok {
-		return tok
+	switch ident {
+	case "let":
+		return LET
+	case "if":
+		return IF
+	case "else":
+		return ELSE
+	case "true":
+		return TRUE
+	case "false":
+		return FALSE
+	case "null":
+		return NULL
+	case "return":
+		return RETURN
+	case "for":
+		return FOR
+	case "in":
+		return IN
+	case "fn":
+		return FN
+	default:
+		return IDENT
 	}
-	return IDENT
 }
 
 // CanEndStatement returns true if this token type can end a statement (for ASI).
