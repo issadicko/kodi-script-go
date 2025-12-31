@@ -4,6 +4,7 @@ package interpreter
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"sync"
 
 	"github.com/issadicko/kodi-script-go/ast"
@@ -267,12 +268,8 @@ func (i *Interpreter) evalStringTemplate(tmpl *ast.StringTemplate) (Value, error
 			return nil, err
 		}
 
-		// Convert to string
-		if val == nil {
-			result += "null"
-		} else {
-			result += fmt.Sprintf("%v", val)
-		}
+		// Convert to string using fast path
+		result += toString(val)
 	}
 
 	return result, nil
@@ -427,12 +424,12 @@ func (i *Interpreter) evalBinaryExpr(expr *ast.BinaryExpr) (Value, error) {
 }
 
 func (i *Interpreter) evalPlus(left, right Value) (Value, error) {
-	// String concatenation
+	// String concatenation with fast path
 	if ls, ok := left.(string); ok {
-		return ls + fmt.Sprintf("%v", right), nil
+		return ls + toString(right), nil
 	}
 	if rs, ok := right.(string); ok {
-		return fmt.Sprintf("%v", left) + rs, nil
+		return toString(left) + rs, nil
 	}
 
 	// Numeric addition
@@ -443,6 +440,28 @@ func (i *Interpreter) evalPlus(left, right Value) (Value, error) {
 	}
 
 	return nil, fmt.Errorf("cannot add %T and %T", left, right)
+}
+
+// toString converts a value to string efficiently without fmt.Sprintf
+func toString(val Value) string {
+	switch v := val.(type) {
+	case string:
+		return v
+	case float64:
+		if v == float64(int64(v)) {
+			return strconv.FormatInt(int64(v), 10)
+		}
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	case nil:
+		return "null"
+	default:
+		return fmt.Sprintf("%v", val)
+	}
 }
 
 func (i *Interpreter) evalArithmetic(left, right Value, op string) (Value, error) {
