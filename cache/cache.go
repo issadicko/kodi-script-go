@@ -20,6 +20,7 @@ type ASTCache struct {
 
 type cacheEntry struct {
 	key     string
+	source  string // Store source for collision detection
 	program *ast.Program
 }
 
@@ -42,19 +43,23 @@ func hash(source string) string {
 func (c *ASTCache) Get(source string) (*ast.Program, bool) {
 	key := hash(source)
 
-	c.mu.RLock()
-	elem, ok := c.items[key]
-	c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
+	elem, ok := c.items[key]
 	if !ok {
 		return nil, false
 	}
 
-	c.mu.Lock()
-	c.order.MoveToFront(elem)
-	c.mu.Unlock()
+	entry := elem.Value.(*cacheEntry)
 
-	return elem.Value.(*cacheEntry).program, true
+	// Collision detection: verify source matches
+	if entry.source != source {
+		return nil, false
+	}
+
+	c.order.MoveToFront(elem)
+	return entry.program, true
 }
 
 // Set stores an AST program in the cache.
@@ -81,7 +86,7 @@ func (c *ASTCache) Set(source string, program *ast.Program) {
 	}
 
 	// Add new entry
-	entry := &cacheEntry{key: key, program: program}
+	entry := &cacheEntry{key: key, source: source, program: program}
 	elem := c.order.PushFront(entry)
 	c.items[key] = elem
 }
