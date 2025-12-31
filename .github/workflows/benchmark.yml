@@ -18,19 +18,31 @@ jobs:
       with:
         go-version: '1.21'
 
-    - name: Run Benchmarks
+    - name: Run KodiScript Benchmarks
       run: go test -bench=. -benchmem -benchtime=2s | tee benchmark-results.txt
+
+    - name: Run Comparison Benchmarks (vs Goja)
+      working-directory: benchmarks/comparison
+      run: |
+        go mod tidy
+        go test -bench=. -benchmem -benchtime=1s | tee ../../comparison-results.txt
 
     - name: Upload Benchmark Results
       uses: actions/upload-artifact@v4
       with:
         name: benchmark-results
-        path: benchmark-results.txt
+        path: |
+          benchmark-results.txt
+          comparison-results.txt
 
-    - name: Compare with baseline (on PR)
-      if: github.event_name == 'pull_request'
+    - name: Summary
       run: |
-        echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+        echo "## 🚀 KodiScript Benchmarks" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
         cat benchmark-results.txt >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## 📊 Comparison vs Goja (JavaScript)" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        cat comparison-results.txt >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
