@@ -1,9 +1,10 @@
-package kodi
+package comparison
 
 import (
 	"testing"
 
 	"github.com/dop251/goja"
+	kodi "github.com/issadicko/kodi-script-go"
 )
 
 // ============ Arithmetic Comparison ============
@@ -11,7 +12,7 @@ import (
 func BenchmarkComparison_Arithmetic_KodiScript(b *testing.B) {
 	code := `1 + 2 * 3 - 4 / 2`
 	for i := 0; i < b.N; i++ {
-		Run(code, nil)
+		kodi.Run(code, nil)
 	}
 }
 
@@ -32,7 +33,7 @@ func BenchmarkComparison_Variables_KodiScript(b *testing.B) {
 		let c = a + b
 	`
 	for i := 0; i < b.N; i++ {
-		Run(code, nil)
+		kodi.Run(code, nil)
 	}
 }
 
@@ -56,7 +57,7 @@ func BenchmarkComparison_Function_KodiScript(b *testing.B) {
 		add(10, 20)
 	`
 	for i := 0; i < b.N; i++ {
-		Run(code, nil)
+		kodi.Run(code, nil)
 	}
 }
 
@@ -82,7 +83,7 @@ func BenchmarkComparison_Recursion_KodiScript(b *testing.B) {
 		factorial(10)
 	`
 	for i := 0; i < b.N; i++ {
-		Run(code, nil)
+		kodi.Run(code, nil)
 	}
 }
 
@@ -112,7 +113,7 @@ func BenchmarkComparison_Loop_KodiScript(b *testing.B) {
 		sum
 	`
 	for i := 0; i < b.N; i++ {
-		Run(code, nil)
+		kodi.Run(code, nil)
 	}
 }
 
@@ -139,7 +140,7 @@ func BenchmarkComparison_ArrayMap_KodiScript(b *testing.B) {
 		map(arr, fn(x) { return x * 2 })
 	`
 	for i := 0; i < b.N; i++ {
-		Run(code, nil)
+		kodi.Run(code, nil)
 	}
 }
 
@@ -164,7 +165,7 @@ func BenchmarkComparison_Object_KodiScript(b *testing.B) {
 		let a = obj.active
 	`
 	for i := 0; i < b.N; i++ {
-		Run(code, nil)
+		kodi.Run(code, nil)
 	}
 }
 
@@ -186,7 +187,7 @@ func BenchmarkComparison_Object_Goja(b *testing.B) {
 func BenchmarkComparison_String_KodiScript(b *testing.B) {
 	code := `"hello" + " " + "world"`
 	for i := 0; i < b.N; i++ {
-		Run(code, nil)
+		kodi.Run(code, nil)
 	}
 }
 
@@ -214,7 +215,7 @@ func BenchmarkComparison_Conditionals_KodiScript(b *testing.B) {
 		}
 	`
 	for i := 0; i < b.N; i++ {
-		Run(code, nil)
+		kodi.Run(code, nil)
 	}
 }
 
@@ -251,7 +252,7 @@ func BenchmarkComparison_ComplexScenario_KodiScript(b *testing.B) {
 		let totalAge = reduce(users, fn(acc, u) { return acc + u.age }, 0)
 	`
 	for i := 0; i < b.N; i++ {
-		Run(code, nil)
+		kodi.Run(code, nil)
 	}
 }
 
