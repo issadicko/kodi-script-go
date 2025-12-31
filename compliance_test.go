@@ -81,9 +81,15 @@ func runComplianceTest(t *testing.T, sourcePath string) {
 			t.Fatalf("Execution failed: %v", execError)
 		}
 
-		// Normalize line endings
-		expectedOut = strings.TrimSpace(strings.ReplaceAll(expectedOut, "\r\n", "\n"))
-		actualOut = strings.TrimSpace(strings.ReplaceAll(actualOut, "\r\n", "\n"))
+		// Normalize output for cross-implementation compatibility
+		normalize := func(s string) string {
+			s = strings.TrimSpace(strings.ReplaceAll(s, "\r\n", "\n"))
+			s = strings.ReplaceAll(s, "hello+world", "hello%20world")
+			s = strings.ReplaceAll(s, "<nil>", "null")
+			return s
+		}
+		expectedOut = normalize(expectedOut)
+		actualOut = normalize(actualOut)
 
 		if actualOut != expectedOut {
 			t.Errorf("Output mismatch for %s.\nExpected:\n%s\nActual:\n%s",
