@@ -540,7 +540,9 @@ func (i *Interpreter) evalCallExpr(expr *ast.CallExpr) (Value, error) {
 		}
 
 		for _, arg := range args {
-			i.env.AddOutput(fmt.Sprintf("%v", arg))
+			output := fmt.Sprintf("%v", arg)
+			fmt.Println(output)
+			i.env.AddOutput(output)
 		}
 		return nil, nil
 	}
