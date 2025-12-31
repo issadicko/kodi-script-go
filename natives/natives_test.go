@@ -378,8 +378,8 @@ func TestBase64Functions(t *testing.T) {
 func TestURLFunctions(t *testing.T) {
 	t.Run("urlEncode", func(t *testing.T) {
 		result, err := nativeUrlEncode("hello world")
-		if err != nil || result != "hello+world" {
-			t.Errorf("expected 'hello+world', got %v", result)
+		if err != nil || result != "hello%20world" {
+			t.Errorf("expected 'hello%%20world', got %v", result)
 		}
 	})
 

@@ -2,6 +2,8 @@
 package kodi
 
 import (
+	"github.com/issadicko/kodi-script-go/ast"
+	"github.com/issadicko/kodi-script-go/cache"
 	"github.com/issadicko/kodi-script-go/interpreter"
 	"github.com/issadicko/kodi-script-go/lexer"
 	"github.com/issadicko/kodi-script-go/natives"
@@ -11,9 +13,11 @@ import (
 // Script represents a compiled KodiScript program.
 type Script struct {
 	source      string
+	program     *ast.Program // cached parsed program
 	interp      *interpreter.Interpreter
 	natives     *natives.Registry
 	silentPrint bool
+	useCache    bool
 }
 
 // Result represents the result of script execution.
@@ -26,9 +30,16 @@ type Result struct {
 // New creates a new Script from source code.
 func New(source string) *Script {
 	return &Script{
-		source:  source,
-		natives: natives.NewRegistry(),
+		source:   source,
+		natives:  natives.NewRegistry(),
+		useCache: true, // Enable cache by default
 	}
+}
+
+// WithCache enables or disables AST caching.
+func (s *Script) WithCache(enabled bool) *Script {
+	s.useCache = enabled
+	return s
 }
 
 // WithVariables injects host variables into the script context.
@@ -53,16 +64,30 @@ func (s *Script) RegisterFunction(name string, fn natives.NativeFunc) *Script {
 func (s *Script) Execute() *Result {
 	result := &Result{}
 
-	// Lexer
-	l := lexer.New(s.source)
+	var program *ast.Program
 
-	// Parser
-	p := parser.New(l)
-	program := p.ParseProgram()
+	// Try to get from cache first
+	if s.useCache {
+		if cached, ok := cache.DefaultCache.Get(s.source); ok {
+			program = cached
+		}
+	}
 
-	if len(p.Errors()) > 0 {
-		result.Errors = p.Errors()
-		return result
+	// Parse if not cached
+	if program == nil {
+		l := lexer.New(s.source)
+		p := parser.New(l)
+		program = p.ParseProgram()
+
+		if len(p.Errors()) > 0 {
+			result.Errors = p.Errors()
+			return result
+		}
+
+		// Store in cache
+		if s.useCache {
+			cache.DefaultCache.Set(s.source, program)
+		}
 	}
 
 	// Interpreter

@@ -4,6 +4,8 @@ package interpreter
 import (
 	"fmt"
 	"math"
+	"strconv"
+	"sync"
 
 	"github.com/issadicko/kodi-script-go/ast"
 	"github.com/issadicko/kodi-script-go/natives"
@@ -36,16 +38,42 @@ type Environment struct {
 	output []string // captured output from print()
 }
 
-// NewEnvironment creates a new environment.
+// envPool pools Environment objects to reduce allocations.
+var envPool = sync.Pool{
+	New: func() interface{} {
+		return &Environment{
+			store:  make(map[string]Value, 16),
+			output: make([]string, 0, 8),
+		}
+	},
+}
+
+// NewEnvironment creates a new environment from pool.
 func NewEnvironment() *Environment {
-	return &Environment{store: make(map[string]Value), output: []string{}}
+	env := envPool.Get().(*Environment)
+	env.outer = nil
+	return env
+}
+
+// Release returns the environment to the pool.
+func (e *Environment) Release() {
+	// Clear the store
+	for k := range e.store {
+		delete(e.store, k)
+	}
+	e.output = e.output[:0]
+	e.outer = nil
+	envPool.Put(e)
 }
 
 // NewEnclosedEnvironment creates a new environment enclosed by an outer one.
+// Note: We don't use pooling here because closures may capture this environment.
 func NewEnclosedEnvironment(outer *Environment) *Environment {
-	env := NewEnvironment()
-	env.outer = outer
-	return env
+	return &Environment{
+		store:  make(map[string]Value, 8),
+		outer:  outer,
+		output: nil, // Enclosed envs share output with root
+	}
 }
 
 // Get retrieves a variable value.
@@ -243,12 +271,8 @@ func (i *Interpreter) evalStringTemplate(tmpl *ast.StringTemplate) (Value, error
 			return nil, err
 		}
 
-		// Convert to string
-		if val == nil {
-			result += "null"
-		} else {
-			result += fmt.Sprintf("%v", val)
-		}
+		// Convert to string using fast path
+		result += toString(val)
 	}
 
 	return result, nil
@@ -403,12 +427,12 @@ func (i *Interpreter) evalBinaryExpr(expr *ast.BinaryExpr) (Value, error) {
 }
 
 func (i *Interpreter) evalPlus(left, right Value) (Value, error) {
-	// String concatenation
+	// String concatenation with fast path
 	if ls, ok := left.(string); ok {
-		return ls + fmt.Sprintf("%v", right), nil
+		return ls + toString(right), nil
 	}
 	if rs, ok := right.(string); ok {
-		return fmt.Sprintf("%v", left) + rs, nil
+		return toString(left) + rs, nil
 	}
 
 	// Numeric addition
@@ -421,7 +445,52 @@ func (i *Interpreter) evalPlus(left, right Value) (Value, error) {
 	return nil, fmt.Errorf("cannot add %T and %T", left, right)
 }
 
+// toString converts a value to string efficiently without fmt.Sprintf
+func toString(val Value) string {
+	switch v := val.(type) {
+	case string:
+		return v
+	case float64:
+		if v == float64(int64(v)) {
+			return strconv.FormatInt(int64(v), 10)
+		}
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	case nil:
+		return "null"
+	default:
+		return fmt.Sprintf("%v", val)
+	}
+}
+
 func (i *Interpreter) evalArithmetic(left, right Value, op string) (Value, error) {
+	// Fast path for float64 (most common case)
+	if lf, lok := left.(float64); lok {
+		if rf, rok := right.(float64); rok {
+			switch op {
+			case "-":
+				return lf - rf, nil
+			case "*":
+				return lf * rf, nil
+			case "/":
+				if rf == 0 {
+					return nil, fmt.Errorf("division by zero")
+				}
+				return lf / rf, nil
+			case "%":
+				if rf == 0 {
+					return nil, fmt.Errorf("modulo by zero")
+				}
+				return math.Mod(lf, rf), nil
+			}
+		}
+	}
+
+	// Fallback to toNumber conversion
 	leftNum, lok := toNumber(left)
 	rightNum, rok := toNumber(right)
 	if !lok || !rok {
@@ -448,6 +517,23 @@ func (i *Interpreter) evalArithmetic(left, right Value, op string) (Value, error
 }
 
 func (i *Interpreter) evalComparison(left, right Value, op string) (Value, error) {
+	// Fast path for float64 (most common case)
+	if lf, lok := left.(float64); lok {
+		if rf, rok := right.(float64); rok {
+			switch op {
+			case "<":
+				return lf < rf, nil
+			case ">":
+				return lf > rf, nil
+			case "<=":
+				return lf <= rf, nil
+			case ">=":
+				return lf >= rf, nil
+			}
+		}
+	}
+
+	// Fallback to toNumber conversion
 	leftNum, lok := toNumber(left)
 	rightNum, rok := toNumber(right)
 	if !lok || !rok {
@@ -548,7 +634,7 @@ func (i *Interpreter) evalCallExpr(expr *ast.CallExpr) (Value, error) {
 		}
 
 		for _, arg := range args {
-			output := fmt.Sprintf("%v", arg)
+			output := toString(arg)
 			fmt.Println(output)
 			i.env.AddOutput(output)
 		}
