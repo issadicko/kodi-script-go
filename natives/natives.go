@@ -488,7 +488,8 @@ func nativeUrlEncode(args ...interface{}) (interface{}, error) {
 	if !ok {
 		return nil, fmt.Errorf("urlEncode requires a string argument")
 	}
-	return url.QueryEscape(s), nil
+	// Use PathEscape for RFC 3986 compliance (spaces as %20, not +)
+	return url.PathEscape(s), nil
 }
 
 func nativeUrlDecode(args ...interface{}) (interface{}, error) {

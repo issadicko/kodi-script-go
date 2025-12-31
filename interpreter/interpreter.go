@@ -67,10 +67,13 @@ func (e *Environment) Release() {
 }
 
 // NewEnclosedEnvironment creates a new environment enclosed by an outer one.
+// Note: We don't use pooling here because closures may capture this environment.
 func NewEnclosedEnvironment(outer *Environment) *Environment {
-	env := NewEnvironment()
-	env.outer = outer
-	return env
+	return &Environment{
+		store:  make(map[string]Value, 8),
+		outer:  outer,
+		output: nil, // Enclosed envs share output with root
+	}
 }
 
 // Get retrieves a variable value.
@@ -631,7 +634,7 @@ func (i *Interpreter) evalCallExpr(expr *ast.CallExpr) (Value, error) {
 		}
 
 		for _, arg := range args {
-			output := fmt.Sprintf("%v", arg)
+			output := toString(arg)
 			fmt.Println(output)
 			i.env.AddOutput(output)
 		}
