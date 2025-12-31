@@ -4,6 +4,7 @@ package interpreter
 import (
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/issadicko/kodi-script-go/ast"
 	"github.com/issadicko/kodi-script-go/natives"
@@ -36,9 +37,32 @@ type Environment struct {
 	output []string // captured output from print()
 }
 
-// NewEnvironment creates a new environment.
+// envPool pools Environment objects to reduce allocations.
+var envPool = sync.Pool{
+	New: func() interface{} {
+		return &Environment{
+			store:  make(map[string]Value, 16),
+			output: make([]string, 0, 8),
+		}
+	},
+}
+
+// NewEnvironment creates a new environment from pool.
 func NewEnvironment() *Environment {
-	return &Environment{store: make(map[string]Value), output: []string{}}
+	env := envPool.Get().(*Environment)
+	env.outer = nil
+	return env
+}
+
+// Release returns the environment to the pool.
+func (e *Environment) Release() {
+	// Clear the store
+	for k := range e.store {
+		delete(e.store, k)
+	}
+	e.output = e.output[:0]
+	e.outer = nil
+	envPool.Put(e)
 }
 
 // NewEnclosedEnvironment creates a new environment enclosed by an outer one.
