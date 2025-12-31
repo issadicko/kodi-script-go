@@ -2,9 +2,9 @@ name: KodiScript CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "**" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "**" ]
 
 jobs:
   test-go:
@@ -15,9 +15,19 @@ jobs:
         working-directory: .
     steps:
     - uses: actions/checkout@v3
+    
+    - name: Checkout Compliance Tests
+      uses: actions/checkout@v3
+      with:
+        repository: issadicko/kodi-compliance-tests
+        path: compliance-tests
+
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
         go-version: '1.21'
+        
     - name: Test
+      env:
+        KODI_COMPLIANCE_TESTS_PATH: ${{ github.workspace }}/compliance-tests
       run: go test -v ./...
