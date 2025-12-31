@@ -446,6 +446,29 @@ func (i *Interpreter) evalPlus(left, right Value) (Value, error) {
 }
 
 func (i *Interpreter) evalArithmetic(left, right Value, op string) (Value, error) {
+	// Fast path for float64 (most common case)
+	if lf, lok := left.(float64); lok {
+		if rf, rok := right.(float64); rok {
+			switch op {
+			case "-":
+				return lf - rf, nil
+			case "*":
+				return lf * rf, nil
+			case "/":
+				if rf == 0 {
+					return nil, fmt.Errorf("division by zero")
+				}
+				return lf / rf, nil
+			case "%":
+				if rf == 0 {
+					return nil, fmt.Errorf("modulo by zero")
+				}
+				return math.Mod(lf, rf), nil
+			}
+		}
+	}
+
+	// Fallback to toNumber conversion
 	leftNum, lok := toNumber(left)
 	rightNum, rok := toNumber(right)
 	if !lok || !rok {
@@ -472,6 +495,23 @@ func (i *Interpreter) evalArithmetic(left, right Value, op string) (Value, error
 }
 
 func (i *Interpreter) evalComparison(left, right Value, op string) (Value, error) {
+	// Fast path for float64 (most common case)
+	if lf, lok := left.(float64); lok {
+		if rf, rok := right.(float64); rok {
+			switch op {
+			case "<":
+				return lf < rf, nil
+			case ">":
+				return lf > rf, nil
+			case "<=":
+				return lf <= rf, nil
+			case ">=":
+				return lf >= rf, nil
+			}
+		}
+	}
+
+	// Fallback to toNumber conversion
 	leftNum, lok := toNumber(left)
 	rightNum, rok := toNumber(right)
 	if !lok || !rok {
