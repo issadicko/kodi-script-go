@@ -641,3 +641,208 @@ func TestGetFieldValue(t *testing.T) {
 		t.Error("expected nil for non-object")
 	}
 }
+
+func TestDateTimeFunctions(t *testing.T) {
+	t.Run("now", func(t *testing.T) {
+		result, err := nativeNow()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		ts := result.(float64)
+		if ts < 1700000000000 { // After Nov 2023
+			t.Errorf("timestamp too small: %v", ts)
+		}
+	})
+
+	t.Run("date", func(t *testing.T) {
+		result, err := nativeDate()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		dateStr := result.(string)
+		if len(dateStr) != 10 || dateStr[4] != '-' {
+			t.Errorf("expected YYYY-MM-DD format, got %v", dateStr)
+		}
+	})
+
+	t.Run("time", func(t *testing.T) {
+		result, err := nativeTime()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		timeStr := result.(string)
+		if len(timeStr) != 8 || timeStr[2] != ':' {
+			t.Errorf("expected HH:MM:SS format, got %v", timeStr)
+		}
+	})
+
+	t.Run("datetime", func(t *testing.T) {
+		result, err := nativeDatetime()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		dtStr := result.(string)
+		if !strings.Contains(dtStr, "T") {
+			t.Errorf("expected ISO format with T, got %v", dtStr)
+		}
+	})
+
+	t.Run("timestamp", func(t *testing.T) {
+		// Without args - returns current
+		result, err := nativeTimestamp()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		ts := result.(float64)
+		if ts < 1700000000000 {
+			t.Errorf("timestamp too small: %v", ts)
+		}
+
+		// With date string
+		result, err = nativeTimestamp("2024-12-25")
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		// Should return a valid timestamp
+
+		// Invalid date
+		_, err = nativeTimestamp("invalid")
+		if err == nil {
+			t.Error("expected error for invalid date")
+		}
+	})
+
+	t.Run("formatDate", func(t *testing.T) {
+		// Use a known timestamp: 2024-12-25 00:00:00 UTC
+		ts := float64(1735084800000) // Approx Dec 25, 2024
+		result, err := nativeFormatDate(ts, "YYYY-MM-DD")
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		formatted := result.(string)
+		if !strings.HasPrefix(formatted, "202") {
+			t.Errorf("expected year starting with 202, got %v", formatted)
+		}
+	})
+
+	t.Run("year", func(t *testing.T) {
+		result, err := nativeYear()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		year := result.(float64)
+		if year < 2024 {
+			t.Errorf("expected year >= 2024, got %v", year)
+		}
+	})
+
+	t.Run("month", func(t *testing.T) {
+		result, err := nativeMonth()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		month := result.(float64)
+		if month < 1 || month > 12 {
+			t.Errorf("expected month 1-12, got %v", month)
+		}
+	})
+
+	t.Run("day", func(t *testing.T) {
+		result, err := nativeDay()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		day := result.(float64)
+		if day < 1 || day > 31 {
+			t.Errorf("expected day 1-31, got %v", day)
+		}
+	})
+
+	t.Run("hour", func(t *testing.T) {
+		result, err := nativeHour()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		hour := result.(float64)
+		if hour < 0 || hour > 23 {
+			t.Errorf("expected hour 0-23, got %v", hour)
+		}
+	})
+
+	t.Run("minute", func(t *testing.T) {
+		result, err := nativeMinute()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		minute := result.(float64)
+		if minute < 0 || minute > 59 {
+			t.Errorf("expected minute 0-59, got %v", minute)
+		}
+	})
+
+	t.Run("second", func(t *testing.T) {
+		result, err := nativeSecond()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		second := result.(float64)
+		if second < 0 || second > 59 {
+			t.Errorf("expected second 0-59, got %v", second)
+		}
+	})
+
+	t.Run("dayOfWeek", func(t *testing.T) {
+		result, err := nativeDayOfWeek()
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		dow := result.(float64)
+		if dow < 0 || dow > 6 {
+			t.Errorf("expected dayOfWeek 0-6, got %v", dow)
+		}
+	})
+
+	t.Run("addDays", func(t *testing.T) {
+		now, _ := nativeNow()
+		ts := now.(float64)
+		result, err := nativeAddDays(ts, float64(7))
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		newTs := result.(float64)
+		diff := newTs - ts
+		expectedDiff := float64(7 * 24 * 60 * 60 * 1000) // 7 days in ms
+		if diff < expectedDiff-1000 || diff > expectedDiff+1000 {
+			t.Errorf("expected ~7 days diff, got %v", diff)
+		}
+	})
+
+	t.Run("addHours", func(t *testing.T) {
+		now, _ := nativeNow()
+		ts := now.(float64)
+		result, err := nativeAddHours(ts, float64(24))
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		newTs := result.(float64)
+		diff := newTs - ts
+		expectedDiff := float64(24 * 60 * 60 * 1000) // 24 hours in ms
+		if diff < expectedDiff-1000 || diff > expectedDiff+1000 {
+			t.Errorf("expected ~24 hours diff, got %v", diff)
+		}
+	})
+
+	t.Run("diffDays", func(t *testing.T) {
+		now, _ := nativeNow()
+		ts := now.(float64)
+		nextWeek, _ := nativeAddDays(ts, float64(7))
+		result, err := nativeDiffDays(ts, nextWeek.(float64))
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		diff := result.(float64)
+		if diff != 7 {
+			t.Errorf("expected 7 days diff, got %v", diff)
+		}
+	})
+}

@@ -149,6 +149,22 @@ result := kodi.Run(`
 | `isString(val)` | Vérifie si chaîne |
 | `isBool(val)` | Vérifie si booléen |
 
+### Date/Heure
+| Fonction | Description |
+|----------|-------------|
+| `now()` | Timestamp actuel en ms |
+| `date()` | Date actuelle (YYYY-MM-DD) |
+| `time()` | Heure actuelle (HH:MM:SS) |
+| `datetime()` | Date/heure ISO 8601 |
+| `timestamp([str])` | Parse une date ou retourne timestamp actuel |
+| `formatDate(ts, [fmt])` | Formate un timestamp |
+| `year([ts])`, `month([ts])`, `day([ts])` | Extrait année/mois/jour |
+| `hour([ts])`, `minute([ts])`, `second([ts])` | Extrait h/min/sec |
+| `dayOfWeek([ts])` | Jour de semaine (0=Dimanche) |
+| `addDays(ts, n)` | Ajoute n jours |
+| `addHours(ts, n)` | Ajoute n heures |
+| `diffDays(ts1, ts2)` | Différence en jours |
+
 ## 🔌 Extensibilité
 
 KodiScript est conçu pour être **extensible**. Vous pouvez enrichir le langage en ajoutant vos propres fonctions natives, permettant aux scripts d'interagir avec votre système.
