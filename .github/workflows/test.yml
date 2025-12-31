@@ -21,6 +21,8 @@ jobs:
       with:
         repository: issadicko/kodi-compliance-tests
         path: compliance-tests
+      continue-on-error: true
+
 
     - name: Set up Go
       uses: actions/setup-go@v4
