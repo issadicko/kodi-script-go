@@ -2,6 +2,7 @@
 package interpreter
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -10,6 +11,9 @@ import (
 	"github.com/issadicko/kodi-script-go/ast"
 	"github.com/issadicko/kodi-script-go/natives"
 )
+
+// ErrMaxOperationsExceeded is returned when the operation limit is exceeded.
+var ErrMaxOperationsExceeded = errors.New("max operations exceeded")
 
 // Value represents a runtime value in KodiScript.
 type Value interface{}
@@ -104,6 +108,8 @@ func (e *Environment) AddOutput(line string) {
 type Interpreter struct {
 	env     *Environment
 	natives *natives.Registry
+	opCount int64 // Current operation count
+	maxOps  int64 // Maximum allowed operations (0 = unlimited)
 }
 
 // New creates a new Interpreter.
@@ -152,7 +158,30 @@ func (i *Interpreter) SetGlobal(name string, value Value) {
 	i.env.Set(name, value)
 }
 
+// SetMaxOperations sets the maximum number of operations allowed.
+// If maxOps is 0, there is no limit (default behavior).
+func (i *Interpreter) SetMaxOperations(maxOps int64) {
+	i.maxOps = maxOps
+	i.opCount = 0
+}
+
+// checkOperationLimit increments the operation counter and returns an error if the limit is exceeded.
+func (i *Interpreter) checkOperationLimit() error {
+	if i.maxOps > 0 {
+		i.opCount++
+		if i.opCount > i.maxOps {
+			return ErrMaxOperationsExceeded
+		}
+	}
+	return nil
+}
+
 func (i *Interpreter) evalStatement(stmt ast.Statement) (Value, error) {
+	// Check operation limit at each statement
+	if err := i.checkOperationLimit(); err != nil {
+		return nil, err
+	}
+
 	switch s := stmt.(type) {
 	case *ast.VarDecl:
 		val, err := i.evalExpression(s.Value)
@@ -212,6 +241,11 @@ func (i *Interpreter) evalForStatement(stmt *ast.ForStatement) (Value, error) {
 	varName := stmt.Variable.Value
 
 	for _, item := range arr {
+		// Check operation limit at each iteration
+		if err := i.checkOperationLimit(); err != nil {
+			return nil, err
+		}
+
 		// Set loop variable in current environment
 		i.env.Set(varName, item)
 

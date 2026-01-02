@@ -18,6 +18,7 @@ type Script struct {
 	natives     *natives.Registry
 	silentPrint bool
 	useCache    bool
+	maxOps      int64 // Maximum operations (0 = unlimited)
 }
 
 // Result represents the result of script execution.
@@ -70,6 +71,14 @@ func (s *Script) Bind(name string, obj interface{}) *Script {
 	return s
 }
 
+// WithMaxOperations sets the maximum number of operations allowed.
+// If the limit is exceeded, execution will stop with ErrMaxOperationsExceeded.
+// Use this to protect against infinite loops or overly complex scripts.
+func (s *Script) WithMaxOperations(maxOps int64) *Script {
+	s.maxOps = maxOps
+	return s
+}
+
 // Execute runs the script and returns the result.
 func (s *Script) Execute() *Result {
 	result := &Result{}
@@ -103,6 +112,11 @@ func (s *Script) Execute() *Result {
 	// Interpreter
 	if s.interp == nil {
 		s.interp = interpreter.New()
+	}
+
+	// Apply operation limit if set
+	if s.maxOps > 0 {
+		s.interp.SetMaxOperations(s.maxOps)
 	}
 
 	val, err := s.interp.Eval(program)
