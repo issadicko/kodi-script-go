@@ -9,8 +9,6 @@ import (
 	"testing"
 
 	"strconv"
-
-	"github.com/issadicko/kodi-script-go"
 )
 
 func TestCompliance(t *testing.T) {
@@ -94,7 +92,7 @@ func runComplianceTest(t *testing.T, sourcePath string) {
 		os.Stdout = w
 
 		// Execute using public API
-		script := kodi.New(source)
+		script := New(source)
 		if maxOps > 0 {
 			script.WithMaxOperations(maxOps)
 		}
