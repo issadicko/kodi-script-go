@@ -125,6 +125,9 @@ func (s *Script) Execute() *Result {
 		s.interp = interpreter.New()
 	}
 
+	// Apply custom natives (layered: customs + builtins fallback)
+	s.interp.SetNatives(s.natives)
+
 	// Apply operation limit if set
 	if s.maxOps > 0 {
 		s.interp.SetMaxOperations(s.maxOps)

@@ -29,19 +29,36 @@ type Registry struct {
 	funcs map[string]NativeFunc
 }
 
-// NewRegistry creates a new registry with all built-in functions.
-func NewRegistry() *Registry {
+// DefaultBuiltins is a global read-only registry containing all built-in functions.
+// It is shared across all script executions for memory efficiency.
+var DefaultBuiltins = newBuiltinRegistry()
+
+// newBuiltinRegistry creates a registry with all built-in functions (internal).
+func newBuiltinRegistry() *Registry {
 	r := &Registry{funcs: make(map[string]NativeFunc)}
 	r.registerBuiltins()
 	return r
 }
 
-// Get retrieves a native function by name.
-func (r *Registry) Get(name string) NativeFunc {
-	return r.funcs[name]
+// NewRegistry creates a new empty registry for custom functions.
+// Custom functions are per-script and take priority over builtins.
+func NewRegistry() *Registry {
+	return &Registry{funcs: make(map[string]NativeFunc)}
 }
 
-// Register adds a custom native function.
+// Get retrieves a native function by name from customs first, then builtins.
+func (r *Registry) Get(name string) NativeFunc {
+	if fn, ok := r.funcs[name]; ok {
+		return fn // Custom takes priority
+	}
+	// Fallback to global builtins
+	if r != DefaultBuiltins {
+		return DefaultBuiltins.funcs[name]
+	}
+	return nil
+}
+
+// Register adds a custom native function to this registry.
 func (r *Registry) Register(name string, fn NativeFunc) {
 	r.funcs[name] = fn
 }

@@ -125,6 +125,12 @@ func New() *Interpreter {
 	}
 }
 
+// SetNatives sets the native function registry for the interpreter.
+// This allows using a custom registry with per-script functions.
+func (i *Interpreter) SetNatives(registry *natives.Registry) {
+	i.natives = registry
+}
+
 // NewWithEnv creates an Interpreter with pre-injected variables.
 func NewWithEnv(variables map[string]interface{}) *Interpreter {
 	interp := New()
