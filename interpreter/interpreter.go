@@ -121,7 +121,7 @@ type Interpreter struct {
 func New() *Interpreter {
 	return &Interpreter{
 		env:     NewEnvironment(),
-		natives: natives.NewRegistry(),
+		natives: natives.DefaultBuiltins, // Use shared builtins by default
 	}
 }
 
