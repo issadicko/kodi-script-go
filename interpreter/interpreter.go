@@ -2,6 +2,7 @@
 package interpreter
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -14,6 +15,9 @@ import (
 
 // ErrMaxOperationsExceeded is returned when the operation limit is exceeded.
 var ErrMaxOperationsExceeded = errors.New("max operations exceeded")
+
+// ErrTimeout is returned when the execution deadline is exceeded.
+var ErrTimeout = errors.New("execution timeout")
 
 // Value represents a runtime value in KodiScript.
 type Value interface{}
@@ -108,8 +112,9 @@ func (e *Environment) AddOutput(line string) {
 type Interpreter struct {
 	env     *Environment
 	natives *natives.Registry
-	opCount int64 // Current operation count
-	maxOps  int64 // Maximum allowed operations (0 = unlimited)
+	opCount int64           // Current operation count
+	maxOps  int64           // Maximum allowed operations (0 = unlimited)
+	ctx     context.Context // Context for timeout support
 }
 
 // New creates a new Interpreter.
@@ -176,9 +181,31 @@ func (i *Interpreter) checkOperationLimit() error {
 	return nil
 }
 
+// SetContext sets a context for timeout support.
+func (i *Interpreter) SetContext(ctx context.Context) {
+	i.ctx = ctx
+}
+
+// checkTimeout checks if the context deadline has been exceeded.
+func (i *Interpreter) checkTimeout() error {
+	if i.ctx != nil {
+		select {
+		case <-i.ctx.Done():
+			return ErrTimeout
+		default:
+			return nil
+		}
+	}
+	return nil
+}
+
 func (i *Interpreter) evalStatement(stmt ast.Statement) (Value, error) {
 	// Check operation limit at each statement
 	if err := i.checkOperationLimit(); err != nil {
+		return nil, err
+	}
+	// Check timeout at each statement
+	if err := i.checkTimeout(); err != nil {
 		return nil, err
 	}
 
@@ -243,6 +270,10 @@ func (i *Interpreter) evalForStatement(stmt *ast.ForStatement) (Value, error) {
 	for _, item := range arr {
 		// Check operation limit at each iteration
 		if err := i.checkOperationLimit(); err != nil {
+			return nil, err
+		}
+		// Check timeout at each iteration
+		if err := i.checkTimeout(); err != nil {
 			return nil, err
 		}
 

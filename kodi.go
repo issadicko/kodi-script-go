@@ -2,6 +2,9 @@
 package kodi
 
 import (
+	"context"
+	"time"
+
 	"github.com/issadicko/kodi-script-go/ast"
 	"github.com/issadicko/kodi-script-go/cache"
 	"github.com/issadicko/kodi-script-go/interpreter"
@@ -18,7 +21,8 @@ type Script struct {
 	natives     *natives.Registry
 	silentPrint bool
 	useCache    bool
-	maxOps      int64 // Maximum operations (0 = unlimited)
+	maxOps      int64         // Maximum operations (0 = unlimited)
+	timeout     time.Duration // Execution timeout (0 = no timeout)
 }
 
 // Result represents the result of script execution.
@@ -79,6 +83,13 @@ func (s *Script) WithMaxOperations(maxOps int64) *Script {
 	return s
 }
 
+// WithTimeout sets a timeout for script execution.
+// If the timeout is exceeded, execution will stop with ErrTimeout.
+func (s *Script) WithTimeout(timeout time.Duration) *Script {
+	s.timeout = timeout
+	return s
+}
+
 // Execute runs the script and returns the result.
 func (s *Script) Execute() *Result {
 	result := &Result{}
@@ -117,6 +128,13 @@ func (s *Script) Execute() *Result {
 	// Apply operation limit if set
 	if s.maxOps > 0 {
 		s.interp.SetMaxOperations(s.maxOps)
+	}
+
+	// Apply timeout if set
+	if s.timeout > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+		defer cancel()
+		s.interp.SetContext(ctx)
 	}
 
 	val, err := s.interp.Eval(program)
