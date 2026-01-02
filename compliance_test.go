@@ -2,16 +2,15 @@ package kodi
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/issadicko/kodi-script-go/interpreter"
-	"github.com/issadicko/kodi-script-go/lexer"
-	"github.com/issadicko/kodi-script-go/parser"
+	"strconv"
+
+	"github.com/issadicko/kodi-script-go"
 )
 
 func TestCompliance(t *testing.T) {
@@ -49,15 +48,42 @@ func TestCompliance(t *testing.T) {
 func runComplianceTest(t *testing.T, sourcePath string) {
 	t.Run(filepath.Base(sourcePath), func(t *testing.T) {
 		// Read source code
-		source, err := os.ReadFile(sourcePath)
+		sourceBytes, err := os.ReadFile(sourcePath)
 		if err != nil {
 			t.Fatalf("Failed to read source file: %v", err)
+		}
+		source := string(sourceBytes)
+
+		// Parse directives
+		var maxOps int64
+		var expectError bool
+
+		lines := strings.Split(source, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "// config:") {
+				parts := strings.SplitN(strings.TrimPrefix(line, "// config:"), "=", 2)
+				if len(parts) == 2 {
+					key := strings.TrimSpace(parts[0])
+					val := strings.TrimSpace(parts[1])
+					if key == "maxOps" {
+						if n, err := strconv.ParseInt(val, 10, 64); err == nil {
+							maxOps = n
+						}
+					}
+				}
+			}
+			if strings.HasPrefix(line, "// expect: error") {
+				expectError = true
+			}
 		}
 
 		// Read expected output
 		outPath := strings.TrimSuffix(sourcePath, ".kodi") + ".out"
 		expectedOutBytes, err := os.ReadFile(outPath)
-		if err != nil {
+		if err != nil && !expectError {
+			// It is okay if .out is missing if we expect an error, but usually we should have it
+			// For this specific logic, we'll try to read it.
 			t.Fatalf("Failed to read expected output file: %v", err)
 		}
 		expectedOut := string(expectedOutBytes)
@@ -67,8 +93,13 @@ func runComplianceTest(t *testing.T, sourcePath string) {
 		r, w, _ := os.Pipe()
 		os.Stdout = w
 
-		// Execute
-		execError := executeSource(string(source))
+		// Execute using public API
+		script := kodi.New(source)
+		if maxOps > 0 {
+			script.WithMaxOperations(maxOps)
+		}
+
+		result := script.Execute()
 
 		// Restore stdout
 		w.Close()
@@ -77,35 +108,27 @@ func runComplianceTest(t *testing.T, sourcePath string) {
 		io.Copy(&buf, r)
 		actualOut := buf.String()
 
-		if execError != nil {
-			t.Fatalf("Execution failed: %v", execError)
-		}
+		// Check expectations
+		if expectError {
+			if len(result.Errors) == 0 {
+				t.Errorf("Expected execution error but got none")
+			}
+		} else {
+			if len(result.Errors) > 0 {
+				t.Fatalf("Execution failed: %v", result.Errors)
+			}
 
-		// Normalize output for cross-platform line endings
-		normalize := func(s string) string {
-			return strings.TrimSpace(strings.ReplaceAll(s, "\r\n", "\n"))
-		}
-		expectedOut = normalize(expectedOut)
-		actualOut = normalize(actualOut)
+			// Normalize output for cross-platform line endings
+			normalize := func(s string) string {
+				return strings.TrimSpace(strings.ReplaceAll(s, "\r\n", "\n"))
+			}
+			expectedOut = normalize(expectedOut)
+			actualOut = normalize(actualOut)
 
-		if actualOut != expectedOut {
-			t.Errorf("Output mismatch for %s.\nExpected:\n%s\nActual:\n%s",
-				filepath.Base(sourcePath), expectedOut, actualOut)
+			if actualOut != expectedOut {
+				t.Errorf("Output mismatch for %s.\nExpected:\n%s\nActual:\n%s",
+					filepath.Base(sourcePath), expectedOut, actualOut)
+			}
 		}
 	})
-}
-
-func executeSource(input string) error {
-	l := lexer.New(input)
-	p := parser.New(l)
-	program := p.ParseProgram()
-
-	if len(p.Errors()) > 0 {
-		return fmt.Errorf("parser errors: %v", p.Errors())
-	}
-
-	interp := interpreter.New()
-
-	_, err := interp.Eval(program)
-	return err
 }
