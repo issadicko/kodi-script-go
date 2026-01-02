@@ -147,6 +147,11 @@ func (i *Interpreter) GetOutput() []string {
 	return i.env.GetOutput()
 }
 
+// SetGlobal sets a global variable in the interpreter's environment.
+func (i *Interpreter) SetGlobal(name string, value Value) {
+	i.env.Set(name, value)
+}
+
 func (i *Interpreter) evalStatement(stmt ast.Statement) (Value, error) {
 	switch s := stmt.(type) {
 	case *ast.VarDecl:
@@ -614,11 +619,13 @@ func (i *Interpreter) evalPropertyAccess(expr *ast.PropertyAccessExpr) (Value, e
 		return nil, fmt.Errorf("cannot access property '%s' on null", expr.Property.Value)
 	}
 
+	// First check for map access (existing behavior)
 	if m, ok := object.(map[string]interface{}); ok {
 		return m[expr.Property.Value], nil
 	}
 
-	return nil, fmt.Errorf("cannot access property on %T", object)
+	// Use reflection to access methods and fields on Go objects
+	return i.reflectivePropertyAccess(object, expr.Property.Value)
 }
 
 func (i *Interpreter) evalCallExpr(expr *ast.CallExpr) (Value, error) {

@@ -60,6 +60,16 @@ func (s *Script) RegisterFunction(name string, fn natives.NativeFunc) *Script {
 	return s
 }
 
+// Bind adds a Go object to the script context with reflective access.
+// All public methods and fields of the object will be accessible from KodiScript.
+func (s *Script) Bind(name string, obj interface{}) *Script {
+	if s.interp == nil {
+		s.interp = interpreter.New()
+	}
+	s.interp.SetGlobal(name, obj)
+	return s
+}
+
 // Execute runs the script and returns the result.
 func (s *Script) Execute() *Result {
 	result := &Result{}
