@@ -103,6 +103,16 @@ type ForStatement struct {
 func (fs *ForStatement) statementNode()       {}
 func (fs *ForStatement) TokenLiteral() string { return fs.Token.Literal }
 
+// WhileStatement represents: while (condition) { body }
+type WhileStatement struct {
+	Token     token.Token     // the WHILE token
+	Condition Expression      // loop condition
+	Body      *BlockStatement // loop body
+}
+
+func (ws *WhileStatement) statementNode()       {}
+func (ws *WhileStatement) TokenLiteral() string { return ws.Token.Literal }
+
 // Identifier represents a variable name.
 type Identifier struct {
 	Token token.Token // the IDENT token

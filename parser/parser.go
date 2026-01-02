@@ -205,6 +205,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseReturnStatement()
 	case token.FOR:
 		return p.parseForStatement()
+	case token.WHILE:
+		return p.parseWhileStatement()
 	case token.IDENT:
 		if p.peekTokenIs(token.ASSIGN) {
 			return p.parseAssignment()
@@ -273,6 +275,35 @@ func (p *Parser) parseForStatement() *ast.ForStatement {
 	// Parse iterable expression
 	p.nextToken()
 	stmt.Iterable = p.parseExpression(LOWEST)
+
+	// Expect )
+	if !p.expectPeek(token.RPAREN) {
+		return nil
+	}
+
+	// Expect {
+	if !p.expectPeek(token.LBRACE) {
+		return nil
+	}
+
+	// Parse body
+	stmt.Body = p.parseBlockStatement()
+
+	return stmt
+}
+
+// parseWhileStatement parses: while (condition) { body }
+func (p *Parser) parseWhileStatement() *ast.WhileStatement {
+	stmt := &ast.WhileStatement{Token: p.curToken}
+
+	// Expect (
+	if !p.expectPeek(token.LPAREN) {
+		return nil
+	}
+
+	// Parse condition
+	p.nextToken()
+	stmt.Condition = p.parseExpression(LOWEST)
 
 	// Expect )
 	if !p.expectPeek(token.RPAREN) {

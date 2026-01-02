@@ -64,6 +64,7 @@ const (
 	FOR    Type = "FOR"
 	IN     Type = "IN"
 	FN     Type = "FN"
+	WHILE  Type = "WHILE"
 )
 
 // Token represents a single token with its type, literal value, and position.
@@ -98,6 +99,8 @@ func LookupIdent(ident string) Type {
 		return IN
 	case "fn":
 		return FN
+	case "while":
+		return WHILE
 	default:
 		return IDENT
 	}

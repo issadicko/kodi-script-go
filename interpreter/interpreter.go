@@ -252,6 +252,9 @@ func (i *Interpreter) evalStatement(stmt ast.Statement) (Value, error) {
 	case *ast.ForStatement:
 		return i.evalForStatement(s)
 
+	case *ast.WhileStatement:
+		return i.evalWhileStatement(s)
+
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}
@@ -285,6 +288,47 @@ func (i *Interpreter) evalForStatement(stmt *ast.ForStatement) (Value, error) {
 
 		// Set loop variable in current environment
 		i.env.Set(varName, item)
+
+		// Execute body
+		val, err := i.evalBlockStatement(stmt.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		// Check for return
+		if rv, ok := val.(*ReturnValue); ok {
+			return rv, nil
+		}
+
+		result = val
+	}
+
+	return result, nil
+}
+
+func (i *Interpreter) evalWhileStatement(stmt *ast.WhileStatement) (Value, error) {
+	var result Value
+
+	for {
+		// Check operation limit at each iteration
+		if err := i.checkOperationLimit(); err != nil {
+			return nil, err
+		}
+		// Check timeout at each iteration
+		if err := i.checkTimeout(); err != nil {
+			return nil, err
+		}
+
+		// Evaluate condition
+		condVal, err := i.evalExpression(stmt.Condition)
+		if err != nil {
+			return nil, err
+		}
+
+		// Exit if condition is false
+		if !isTruthy(condVal) {
+			break
+		}
 
 		// Execute body
 		val, err := i.evalBlockStatement(stmt.Body)
