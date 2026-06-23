@@ -44,6 +44,26 @@ type VarDecl struct {
 func (v *VarDecl) statementNode()       {}
 func (v *VarDecl) TokenLiteral() string { return v.Token.Literal }
 
+// ArrayDestructure represents: let [a, b, c] = expr
+type ArrayDestructure struct {
+	Token token.Token // the LET token
+	Names []*Identifier
+	Value Expression
+}
+
+func (a *ArrayDestructure) statementNode()       {}
+func (a *ArrayDestructure) TokenLiteral() string { return a.Token.Literal }
+
+// ObjectDestructure represents: let {a, b} = expr (binds keys a and b)
+type ObjectDestructure struct {
+	Token token.Token // the LET token
+	Names []*Identifier
+	Value Expression
+}
+
+func (o *ObjectDestructure) statementNode()       {}
+func (o *ObjectDestructure) TokenLiteral() string { return o.Token.Literal }
+
 // Assignment represents an assignment: x = expr
 type Assignment struct {
 	Token token.Token // the IDENT token
@@ -112,6 +132,33 @@ type WhileStatement struct {
 
 func (ws *WhileStatement) statementNode()       {}
 func (ws *WhileStatement) TokenLiteral() string { return ws.Token.Literal }
+
+// TryStatement represents: try { body } catch (e) { handler }
+type TryStatement struct {
+	Token    token.Token     // the TRY token
+	Body     *BlockStatement // protected block
+	CatchVar *Identifier     // optional error variable (nil for `catch {}`)
+	Catch    *BlockStatement // handler block
+}
+
+func (ts *TryStatement) statementNode()       {}
+func (ts *TryStatement) TokenLiteral() string { return ts.Token.Literal }
+
+// BreakStatement represents a break inside a loop.
+type BreakStatement struct {
+	Token token.Token // the BREAK token
+}
+
+func (bs *BreakStatement) statementNode()       {}
+func (bs *BreakStatement) TokenLiteral() string { return bs.Token.Literal }
+
+// ContinueStatement represents a continue inside a loop.
+type ContinueStatement struct {
+	Token token.Token // the CONTINUE token
+}
+
+func (cs *ContinueStatement) statementNode()       {}
+func (cs *ContinueStatement) TokenLiteral() string { return cs.Token.Literal }
 
 // Identifier represents a variable name.
 type Identifier struct {
@@ -234,6 +281,26 @@ type SafeAccessExpr struct {
 
 func (sa *SafeAccessExpr) expressionNode()      {}
 func (sa *SafeAccessExpr) TokenLiteral() string { return sa.Token.Literal }
+
+// SpreadExpr represents a spread element: ...expr (inside arrays and call args)
+type SpreadExpr struct {
+	Token token.Token // the ... token
+	Value Expression
+}
+
+func (se *SpreadExpr) expressionNode()      {}
+func (se *SpreadExpr) TokenLiteral() string { return se.Token.Literal }
+
+// TernaryExpr represents a conditional: condition ? consequent : alternative
+type TernaryExpr struct {
+	Token       token.Token // the ? token
+	Condition   Expression
+	Consequent  Expression
+	Alternative Expression
+}
+
+func (te *TernaryExpr) expressionNode()      {}
+func (te *TernaryExpr) TokenLiteral() string { return te.Token.Literal }
 
 // ElvisExpr represents null coalescing: expr ?: default
 type ElvisExpr struct {

@@ -320,13 +320,24 @@ func TestEnvironment(t *testing.T) {
 }
 
 func TestOutputCapture(t *testing.T) {
-	env := NewEnvironment()
-	env.AddOutput("line1")
-	env.AddOutput("line2")
+	// Regression: print() inside a user function must be captured in output,
+	// not lost with the enclosed environment when the function returns.
+	l := lexer.New(`let f = fn() {
+  print("inside")
+}
+f()
+print("outside")`)
+	p := parser.New(l)
 
-	output := env.GetOutput()
+	interp := New()
+	interp.Eval(p.ParseProgram())
+
+	output := interp.GetOutput()
 	if len(output) != 2 {
-		t.Fatalf("expected 2 lines, got %d", len(output))
+		t.Fatalf("expected 2 lines, got %d: %v", len(output), output)
+	}
+	if output[0] != "inside" || output[1] != "outside" {
+		t.Errorf("unexpected output: %v", output)
 	}
 }
 

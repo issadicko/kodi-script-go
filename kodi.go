@@ -3,6 +3,7 @@ package kodi
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/issadicko/kodi-script-go/ast"
@@ -12,6 +13,34 @@ import (
 	"github.com/issadicko/kodi-script-go/natives"
 	"github.com/issadicko/kodi-script-go/parser"
 )
+
+// ErrorKind classifies why execution failed, for programmatic handling.
+type ErrorKind int
+
+const (
+	ErrorKindNone ErrorKind = iota
+	ErrorKindParse
+	ErrorKindRuntime
+	ErrorKindTimeout
+	ErrorKindMaxOperations
+)
+
+// Re-exported typed errors so callers can use errors.Is on Result.Err.
+var (
+	ErrTimeout               = interpreter.ErrTimeout
+	ErrMaxOperationsExceeded = interpreter.ErrMaxOperationsExceeded
+)
+
+func classifyError(err error) ErrorKind {
+	switch {
+	case errors.Is(err, interpreter.ErrTimeout):
+		return ErrorKindTimeout
+	case errors.Is(err, interpreter.ErrMaxOperationsExceeded):
+		return ErrorKindMaxOperations
+	default:
+		return ErrorKindRuntime
+	}
+}
 
 // Script represents a compiled KodiScript program.
 type Script struct {
@@ -23,6 +52,7 @@ type Script struct {
 	useCache    bool
 	maxOps      int64         // Maximum operations (0 = unlimited)
 	timeout     time.Duration // Execution timeout (0 = no timeout)
+	outputSink  func(string)  // Optional sink for print() output
 }
 
 // Result represents the result of script execution.
@@ -30,6 +60,11 @@ type Result struct {
 	Value  interface{}
 	Output []string
 	Errors []string
+	// Err is the first underlying error (nil on success). Use errors.Is with
+	// ErrTimeout / ErrMaxOperationsExceeded to branch on the cause.
+	Err error
+	// Kind classifies the failure (ErrorKindNone on success).
+	Kind ErrorKind
 }
 
 // New creates a new Script from source code.
@@ -56,6 +91,13 @@ func (s *Script) WithVariables(vars map[string]interface{}) *Script {
 // SilentPrint disables console output for print() calls.
 func (s *Script) SilentPrint(silent bool) *Script {
 	s.silentPrint = silent
+	return s
+}
+
+// WithOutput routes print() output to the given callback instead of stdout.
+// Output is still captured in Result.Output.
+func (s *Script) WithOutput(sink func(string)) *Script {
+	s.outputSink = sink
 	return s
 }
 
@@ -111,6 +153,7 @@ func (s *Script) Execute() *Result {
 
 		if len(p.Errors()) > 0 {
 			result.Errors = p.Errors()
+			result.Kind = ErrorKindParse
 			return result
 		}
 
@@ -128,6 +171,14 @@ func (s *Script) Execute() *Result {
 	// Apply custom natives (layered: customs + builtins fallback)
 	s.interp.SetNatives(s.natives)
 
+	// Apply silent print setting (output is still captured in Result.Output)
+	s.interp.SetSilentPrint(s.silentPrint)
+
+	// Route print() to a custom sink if provided
+	if s.outputSink != nil {
+		s.interp.SetOutputSink(s.outputSink)
+	}
+
 	// Apply operation limit if set
 	if s.maxOps > 0 {
 		s.interp.SetMaxOperations(s.maxOps)
@@ -143,6 +194,8 @@ func (s *Script) Execute() *Result {
 	val, err := s.interp.Eval(program)
 	if err != nil {
 		result.Errors = []string{err.Error()}
+		result.Err = err
+		result.Kind = classifyError(err)
 		return result
 	}
 

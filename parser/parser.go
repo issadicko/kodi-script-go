@@ -14,6 +14,7 @@ import (
 const (
 	_ int = iota
 	LOWEST
+	TERNARY     // ?:  (conditional)
 	ELVIS       // ?:
 	OR          // ||
 	AND         // &&
@@ -27,6 +28,7 @@ const (
 )
 
 var precedences = map[token.Type]int{
+	token.QUESTION:    TERNARY,
 	token.ELVIS:       ELVIS,
 	token.OR:          OR,
 	token.AND:         AND,
@@ -97,6 +99,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerInfix(token.AND, p.parseInfixExpression)
 	p.registerInfix(token.OR, p.parseInfixExpression)
 	p.registerInfix(token.ELVIS, p.parseElvisExpression)
+	p.registerInfix(token.QUESTION, p.parseTernaryExpression)
 	p.registerInfix(token.DOT, p.parsePropertyAccess)
 	p.registerInfix(token.SAFE_ACCESS, p.parseSafeAccess)
 	p.registerInfix(token.LPAREN, p.parseCallExpression)
@@ -207,9 +210,26 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseForStatement()
 	case token.WHILE:
 		return p.parseWhileStatement()
+	case token.TRY:
+		return p.parseTryStatement()
+	case token.BREAK:
+		return &ast.BreakStatement{Token: p.curToken}
+	case token.CONTINUE:
+		return &ast.ContinueStatement{Token: p.curToken}
+	case token.FN:
+		// Named function declaration: fn name(...) { ... }
+		if p.peekTokenIs(token.IDENT) {
+			return p.parseFunctionDeclaration()
+		}
+		return p.parseExpressionStatement()
 	case token.IDENT:
-		if p.peekTokenIs(token.ASSIGN) {
+		switch p.peekToken.Type {
+		case token.ASSIGN:
 			return p.parseAssignment()
+		case token.PLUS_EQ, token.MINUS_EQ, token.ASTERISK_EQ, token.SLASH_EQ:
+			return p.parseCompoundAssignment()
+		case token.PLUS_PLUS, token.MINUS_MINUS:
+			return p.parseIncDec()
 		}
 		return p.parseExpressionStatement()
 	default:
@@ -217,8 +237,67 @@ func (p *Parser) parseStatement() ast.Statement {
 	}
 }
 
-func (p *Parser) parseVarDecl() *ast.VarDecl {
-	stmt := &ast.VarDecl{Token: p.curToken}
+// parseCompoundAssignment desugars `x += e` into `x = x + e` (and -=, *=, /=).
+func (p *Parser) parseCompoundAssignment() ast.Statement {
+	name := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	startToken := p.curToken
+
+	p.nextToken() // move onto the compound-assign operator
+	opTok := p.curToken
+	var op string
+	switch opTok.Type {
+	case token.PLUS_EQ:
+		op = "+"
+	case token.MINUS_EQ:
+		op = "-"
+	case token.ASTERISK_EQ:
+		op = "*"
+	case token.SLASH_EQ:
+		op = "/"
+	}
+
+	p.nextToken() // move onto the right-hand expression
+	right := p.parseExpression(LOWEST)
+
+	return &ast.Assignment{
+		Token: startToken,
+		Name:  name,
+		Value: &ast.BinaryExpr{Token: opTok, Left: name, Operator: op, Right: right},
+	}
+}
+
+// parseIncDec desugars `x++` into `x = x + 1` (and `x--` into `x = x - 1`).
+func (p *Parser) parseIncDec() ast.Statement {
+	name := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	startToken := p.curToken
+
+	p.nextToken() // move onto ++ / -- ; caller advances past it
+	opTok := p.curToken
+	op := "+"
+	if opTok.Type == token.MINUS_MINUS {
+		op = "-"
+	}
+
+	one := &ast.NumberLiteral{Token: token.Token{Type: token.NUMBER, Literal: "1"}, Value: 1}
+	return &ast.Assignment{
+		Token: startToken,
+		Name:  name,
+		Value: &ast.BinaryExpr{Token: opTok, Left: name, Operator: op, Right: one},
+	}
+}
+
+func (p *Parser) parseVarDecl() ast.Statement {
+	letTok := p.curToken
+
+	// Destructuring: let [a, b] = expr  /  let {a, b} = expr
+	if p.peekTokenIs(token.LBRACKET) {
+		return p.parseDestructure(letTok, token.LBRACKET, token.RBRACKET, true)
+	}
+	if p.peekTokenIs(token.LBRACE) {
+		return p.parseDestructure(letTok, token.LBRACE, token.RBRACE, false)
+	}
+
+	stmt := &ast.VarDecl{Token: letTok}
 
 	if !p.expectPeek(token.IDENT) {
 		return nil
@@ -234,6 +313,40 @@ func (p *Parser) parseVarDecl() *ast.VarDecl {
 	stmt.Value = p.parseExpression(LOWEST)
 
 	return stmt
+}
+
+// parseDestructure parses `let [a, b] = expr` (isArray) or `let {a, b} = expr`.
+func (p *Parser) parseDestructure(letTok token.Token, open, close token.Type, isArray bool) ast.Statement {
+	p.nextToken() // cur = open bracket/brace
+
+	var names []*ast.Identifier
+	if !p.peekTokenIs(close) {
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+		names = append(names, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+		for p.peekTokenIs(token.COMMA) {
+			p.nextToken()
+			if !p.expectPeek(token.IDENT) {
+				return nil
+			}
+			names = append(names, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+		}
+	}
+
+	if !p.expectPeek(close) {
+		return nil
+	}
+	if !p.expectPeek(token.ASSIGN) {
+		return nil
+	}
+	p.nextToken()
+	value := p.parseExpression(LOWEST)
+
+	if isArray {
+		return &ast.ArrayDestructure{Token: letTok, Names: names, Value: value}
+	}
+	return &ast.ObjectDestructure{Token: letTok, Names: names, Value: value}
 }
 
 // parseReturnStatement parses: return [expr]
@@ -321,6 +434,43 @@ func (p *Parser) parseWhileStatement() *ast.WhileStatement {
 	return stmt
 }
 
+// parseTryStatement parses: try { body } catch [ (e) ] { handler }
+func (p *Parser) parseTryStatement() ast.Statement {
+	stmt := &ast.TryStatement{Token: p.curToken}
+
+	if !p.expectPeek(token.LBRACE) {
+		return nil
+	}
+	stmt.Body = p.parseBlockStatement()
+
+	// Allow a newline between the try block's `}` and `catch`.
+	for p.peekTokenIs(token.NEWLINE) {
+		p.nextToken()
+	}
+	if !p.expectPeek(token.CATCH) {
+		return nil
+	}
+
+	// Optional error variable: catch (e) { ... } or catch { ... }
+	if p.peekTokenIs(token.LPAREN) {
+		p.nextToken() // cur = (
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
+		stmt.CatchVar = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		if !p.expectPeek(token.RPAREN) {
+			return nil
+		}
+	}
+
+	if !p.expectPeek(token.LBRACE) {
+		return nil
+	}
+	stmt.Catch = p.parseBlockStatement()
+
+	return stmt
+}
+
 func (p *Parser) parseAssignment() *ast.Assignment {
 	stmt := &ast.Assignment{Token: p.curToken}
 	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
@@ -354,13 +504,22 @@ func (p *Parser) parseIfStatement() *ast.IfStatement {
 	stmt.Consequence = p.parseBlockStatement()
 
 	if p.peekTokenIs(token.ELSE) {
-		p.nextToken()
+		p.nextToken() // cur = else
 
-		if !p.expectPeek(token.LBRACE) {
-			return nil
+		if p.peekTokenIs(token.IF) {
+			// else if: parse the nested if and wrap it as the alternative block
+			p.nextToken() // cur = if
+			nested := p.parseIfStatement()
+			stmt.Alternative = &ast.BlockStatement{
+				Token:      p.curToken,
+				Statements: []ast.Statement{nested},
+			}
+		} else {
+			if !p.expectPeek(token.LBRACE) {
+				return nil
+			}
+			stmt.Alternative = p.parseBlockStatement()
 		}
-
-		stmt.Alternative = p.parseBlockStatement()
 	}
 
 	return stmt
@@ -557,12 +716,12 @@ func (p *Parser) parseExpressionList(end token.Type) []ast.Expression {
 	}
 
 	p.nextToken()
-	list = append(list, p.parseExpression(LOWEST))
+	list = append(list, p.parseListElement())
 
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
 		p.nextToken()
-		list = append(list, p.parseExpression(LOWEST))
+		list = append(list, p.parseListElement())
 	}
 
 	if !p.expectPeek(end) {
@@ -570,6 +729,17 @@ func (p *Parser) parseExpressionList(end token.Type) []ast.Expression {
 	}
 
 	return list
+}
+
+// parseListElement parses one element of an array literal or argument list,
+// allowing a spread element (...expr).
+func (p *Parser) parseListElement() ast.Expression {
+	if p.curTokenIs(token.ELLIPSIS) {
+		tok := p.curToken
+		p.nextToken()
+		return &ast.SpreadExpr{Token: tok, Value: p.parseExpression(LOWEST)}
+	}
+	return p.parseExpression(LOWEST)
 }
 
 func (p *Parser) parseObjectLiteral() ast.Expression {
@@ -582,6 +752,14 @@ func (p *Parser) parseObjectLiteral() ast.Expression {
 	}
 
 	for !p.peekTokenIs(token.RBRACE) {
+		// Skip newlines before a key (supports multi-line object literals)
+		for p.peekTokenIs(token.NEWLINE) {
+			p.nextToken()
+		}
+		if p.peekTokenIs(token.RBRACE) {
+			break
+		}
+
 		p.nextToken()
 
 		// Support both string "key" and identifier key
@@ -602,8 +780,15 @@ func (p *Parser) parseObjectLiteral() ast.Expression {
 
 		object.Pairs[key] = value
 
-		if !p.peekTokenIs(token.RBRACE) && !p.expectPeek(token.COMMA) {
+		// Separator can be COMMA or NEWLINE (or the closing RBRACE)
+		if !p.peekTokenIs(token.RBRACE) && !p.peekTokenIs(token.COMMA) && !p.peekTokenIs(token.NEWLINE) {
+			p.addError("expected comma, newline or }")
 			return nil
+		}
+
+		// Consume a comma separator if present; newlines are skipped at loop top
+		if p.peekTokenIs(token.COMMA) {
+			p.nextToken()
 		}
 	}
 
@@ -639,6 +824,22 @@ func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
 	expression.Right = p.parseExpression(precedence)
 
 	return expression
+}
+
+func (p *Parser) parseTernaryExpression(condition ast.Expression) ast.Expression {
+	expr := &ast.TernaryExpr{Token: p.curToken, Condition: condition}
+
+	p.nextToken() // move onto the consequent
+	expr.Consequent = p.parseExpression(LOWEST)
+
+	if !p.expectPeek(token.COLON) {
+		return nil
+	}
+
+	p.nextToken() // move onto the alternative
+	expr.Alternative = p.parseExpression(LOWEST)
+
+	return expr
 }
 
 func (p *Parser) parseElvisExpression(left ast.Expression) ast.Expression {
@@ -681,6 +882,28 @@ func (p *Parser) parseSafeAccess(left ast.Expression) ast.Expression {
 	expression.Property = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 
 	return expression
+}
+
+// parseFunctionDeclaration desugars `fn name(a, b) { ... }` into
+// `let name = fn(a, b) { ... }` (a VarDecl), which also makes recursion work
+// because the name is bound in the closure's environment.
+func (p *Parser) parseFunctionDeclaration() ast.Statement {
+	fnToken := p.curToken // the 'fn' token
+
+	p.nextToken() // move onto the function name
+	name := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	lit := &ast.FunctionLiteral{Token: fnToken}
+	if !p.expectPeek(token.LPAREN) {
+		return nil
+	}
+	lit.Parameters = p.parseFunctionParameters()
+	if !p.expectPeek(token.LBRACE) {
+		return nil
+	}
+	lit.Body = p.parseBlockStatement()
+
+	return &ast.VarDecl{Token: fnToken, Name: name, Value: lit}
 }
 
 func (p *Parser) parseFunctionLiteral() ast.Expression {
@@ -743,12 +966,12 @@ func (p *Parser) parseCallArguments() []ast.Expression {
 	}
 
 	p.nextToken()
-	args = append(args, p.parseExpression(LOWEST))
+	args = append(args, p.parseListElement())
 
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
 		p.nextToken()
-		args = append(args, p.parseExpression(LOWEST))
+		args = append(args, p.parseListElement())
 	}
 
 	if !p.expectPeek(token.RPAREN) {

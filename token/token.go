@@ -24,6 +24,14 @@ const (
 	SLASH    Type = "/"
 	PERCENT  Type = "%"
 
+	// Compound assignment and increment/decrement
+	PLUS_EQ     Type = "+="
+	MINUS_EQ    Type = "-="
+	ASTERISK_EQ Type = "*="
+	SLASH_EQ    Type = "/="
+	PLUS_PLUS   Type = "++"
+	MINUS_MINUS Type = "--"
+
 	// Comparison
 	EQ     Type = "=="
 	NOT_EQ Type = "!="
@@ -40,6 +48,7 @@ const (
 	// Null-safety operators
 	SAFE_ACCESS Type = "?." // Optional chaining
 	ELVIS       Type = "?:" // Null coalescing
+	QUESTION    Type = "?"  // Ternary conditional
 
 	// Delimiters
 	COMMA     Type = ","
@@ -52,19 +61,24 @@ const (
 	LBRACKET  Type = "["
 	RBRACKET  Type = "]"
 	DOT       Type = "."
+	ELLIPSIS  Type = "..." // spread / rest
 
 	// Keywords
-	LET    Type = "LET"
-	IF     Type = "IF"
-	ELSE   Type = "ELSE"
-	TRUE   Type = "TRUE"
-	FALSE  Type = "FALSE"
-	NULL   Type = "NULL"
-	RETURN Type = "RETURN"
-	FOR    Type = "FOR"
-	IN     Type = "IN"
-	FN     Type = "FN"
-	WHILE  Type = "WHILE"
+	LET      Type = "LET"
+	IF       Type = "IF"
+	ELSE     Type = "ELSE"
+	TRUE     Type = "TRUE"
+	FALSE    Type = "FALSE"
+	NULL     Type = "NULL"
+	RETURN   Type = "RETURN"
+	FOR      Type = "FOR"
+	IN       Type = "IN"
+	FN       Type = "FN"
+	WHILE    Type = "WHILE"
+	BREAK    Type = "BREAK"
+	CONTINUE Type = "CONTINUE"
+	TRY      Type = "TRY"
+	CATCH    Type = "CATCH"
 )
 
 // Token represents a single token with its type, literal value, and position.
@@ -101,6 +115,14 @@ func LookupIdent(ident string) Type {
 		return FN
 	case "while":
 		return WHILE
+	case "break":
+		return BREAK
+	case "continue":
+		return CONTINUE
+	case "try":
+		return TRY
+	case "catch":
+		return CATCH
 	default:
 		return IDENT
 	}
@@ -109,17 +131,8 @@ func LookupIdent(ident string) Type {
 // CanEndStatement returns true if this token type can end a statement (for ASI).
 func (t Type) CanEndStatement() bool {
 	switch t {
-	case IDENT, NUMBER, STRING, STRING_TEMPLATE, TRUE, FALSE, NULL, RPAREN, RBRACE, RBRACKET:
-		return true
-	default:
-		return false
-	}
-}
-
-// IsOperatorContinuation returns true if this token type indicates the statement continues.
-func (t Type) IsOperatorContinuation() bool {
-	switch t {
-	case PLUS, MINUS, ASTERISK, SLASH, PERCENT, AND, OR, EQ, NOT_EQ, LT, GT, LT_EQ, GT_EQ, SAFE_ACCESS, ELVIS, DOT, COMMA:
+	case IDENT, NUMBER, STRING, STRING_TEMPLATE, TRUE, FALSE, NULL, RPAREN, RBRACE, RBRACKET,
+		PLUS_PLUS, MINUS_MINUS, BREAK, CONTINUE:
 		return true
 	default:
 		return false

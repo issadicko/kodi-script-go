@@ -3,24 +3,24 @@ package cache
 
 import (
 	"container/list"
-	"crypto/sha256"
-	"encoding/hex"
 	"sync"
 
 	"github.com/issadicko/kodi-script-go/ast"
 )
 
-// ASTCache is an LRU cache for parsed AST programs.
+// ASTCache is an LRU cache for parsed AST programs, keyed directly by source.
+// Using the source string as the key avoids hashing on every lookup and the
+// hash-collision handling that a digest key would require (Go already hashes
+// the string for the map internally, and that hash is cached on the string).
 type ASTCache struct {
-	mu       sync.RWMutex
+	mu       sync.Mutex
 	capacity int
 	items    map[string]*list.Element
 	order    *list.List
 }
 
 type cacheEntry struct {
-	key     string
-	source  string // Store source for collision detection
+	source  string
 	program *ast.Program
 }
 
@@ -33,62 +33,39 @@ func NewASTCache(capacity int) *ASTCache {
 	}
 }
 
-// hash generates a hash key for the source code.
-func hash(source string) string {
-	h := sha256.Sum256([]byte(source))
-	return hex.EncodeToString(h[:8]) // Use first 8 bytes for shorter key
-}
-
 // Get retrieves a cached AST program.
 func (c *ASTCache) Get(source string) (*ast.Program, bool) {
-	key := hash(source)
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	elem, ok := c.items[key]
+	elem, ok := c.items[source]
 	if !ok {
 		return nil, false
 	}
-
-	entry := elem.Value.(*cacheEntry)
-
-	// Collision detection: verify source matches
-	if entry.source != source {
-		return nil, false
-	}
-
 	c.order.MoveToFront(elem)
-	return entry.program, true
+	return elem.Value.(*cacheEntry).program, true
 }
 
 // Set stores an AST program in the cache.
 func (c *ASTCache) Set(source string, program *ast.Program) {
-	key := hash(source)
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Check if already exists
-	if elem, ok := c.items[key]; ok {
+	if elem, ok := c.items[source]; ok {
 		c.order.MoveToFront(elem)
 		elem.Value.(*cacheEntry).program = program
 		return
 	}
 
-	// Evict if at capacity
+	// Evict the least-recently-used entry if at capacity.
 	if c.order.Len() >= c.capacity {
-		oldest := c.order.Back()
-		if oldest != nil {
+		if oldest := c.order.Back(); oldest != nil {
 			c.order.Remove(oldest)
-			delete(c.items, oldest.Value.(*cacheEntry).key)
+			delete(c.items, oldest.Value.(*cacheEntry).source)
 		}
 	}
 
-	// Add new entry
-	entry := &cacheEntry{key: key, source: source, program: program}
-	elem := c.order.PushFront(entry)
-	c.items[key] = elem
+	c.items[source] = c.order.PushFront(&cacheEntry{source: source, program: program})
 }
 
 // Clear removes all entries from the cache.
@@ -102,8 +79,8 @@ func (c *ASTCache) Clear() {
 
 // Len returns the number of cached entries.
 func (c *ASTCache) Len() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.order.Len()
 }
 
