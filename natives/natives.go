@@ -12,17 +12,60 @@ import (
 	"math"
 	"math/rand"
 	"net/url"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
 // NativeFunc is the signature for native functions.
 type NativeFunc func(args ...interface{}) (interface{}, error)
+
+// Stringify renders a KodiScript value in canonical form. It is shared across
+// the interpreter (print, string templates) and natives (toString, join) so
+// that output is identical across language implementations:
+//   - integral numbers print without a trailing ".0" (3, not 3.0)
+//   - arrays print as "[1, 2, 3]"
+//   - objects print as "{a: 1, b: 2}" with keys sorted for determinism
+//   - strings are not quoted (use jsonStringify for quoted output)
+func Stringify(v interface{}) string {
+	switch val := v.(type) {
+	case nil:
+		return "null"
+	case string:
+		return val
+	case bool:
+		if val {
+			return "true"
+		}
+		return "false"
+	case float64:
+		if val == float64(int64(val)) {
+			return strconv.FormatInt(int64(val), 10)
+		}
+		return strconv.FormatFloat(val, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(val)
+	case int64:
+		return strconv.FormatInt(val, 10)
+	case []interface{}:
+		parts := make([]string, len(val))
+		for i, e := range val {
+			parts[i] = Stringify(e)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case map[string]interface{}:
+		keys := sortedKeys(val)
+		parts := make([]string, len(keys))
+		for i, k := range keys {
+			parts[i] = k + ": " + Stringify(val[k])
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
 
 // Registry holds all registered native functions.
 type Registry struct {
@@ -136,6 +179,27 @@ func (r *Registry) registerBuiltins() {
 	r.funcs["first"] = nativeFirst
 	r.funcs["last"] = nativeLast
 	r.funcs["slice"] = nativeSlice
+	r.funcs["range"] = nativeRange
+	r.funcs["sum"] = nativeSum
+	r.funcs["avg"] = nativeAvg
+	r.funcs["unique"] = nativeUnique
+	r.funcs["flatten"] = nativeFlatten
+	r.funcs["push"] = nativePush
+	r.funcs["concat"] = nativeConcat
+
+	// Object functions
+	r.funcs["keys"] = nativeKeys
+	r.funcs["values"] = nativeValues
+	r.funcs["entries"] = nativeEntries
+	r.funcs["has"] = nativeHas
+
+	// Number parsing
+	r.funcs["parseInt"] = nativeParseInt
+	r.funcs["parseFloat"] = nativeParseFloat
+
+	// Regex
+	r.funcs["regexMatch"] = nativeRegexMatch
+	r.funcs["regexReplace"] = nativeRegexReplace
 
 	// Date/Time functions
 	r.funcs["now"] = nativeNow
@@ -162,7 +226,7 @@ func nativeToString(args ...interface{}) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("toString requires 1 argument")
 	}
-	return fmt.Sprintf("%v", args[0]), nil
+	return Stringify(args[0]), nil
 }
 
 func nativeToNumber(args ...interface{}) (interface{}, error) {
@@ -294,7 +358,7 @@ func nativeJoin(args ...interface{}) (interface{}, error) {
 	}
 	strs := make([]string, len(arr))
 	for i, v := range arr {
-		strs[i] = fmt.Sprintf("%v", v)
+		strs[i] = Stringify(v)
 	}
 	return strings.Join(strs, sep), nil
 }
@@ -382,7 +446,7 @@ func nativePadLeft(args ...interface{}) (interface{}, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("padLeft requires at least 2 arguments")
 	}
-	s := fmt.Sprintf("%v", args[0])
+	s := Stringify(args[0])
 	length := int(asFloat(args[1]))
 	padChar := " "
 	if len(args) > 2 && args[2] != nil {
@@ -401,7 +465,7 @@ func nativePadRight(args ...interface{}) (interface{}, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("padRight requires at least 2 arguments")
 	}
-	s := fmt.Sprintf("%v", args[0])
+	s := Stringify(args[0])
 	length := int(asFloat(args[1]))
 	padChar := " "
 	if len(args) > 2 && args[2] != nil {
@@ -420,7 +484,7 @@ func nativeRepeat(args ...interface{}) (interface{}, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("repeat requires 2 arguments")
 	}
-	s := fmt.Sprintf("%v", args[0])
+	s := Stringify(args[0])
 	count := int(asFloat(args[1]))
 	if count < 0 {
 		count = 0
@@ -890,21 +954,14 @@ func nativeSort(args ...interface{}) (interface{}, error) {
 	result := make([]interface{}, len(arr))
 	copy(result, arr)
 
-	// Sort using bubble sort (simple, works for mixed types)
-	for i := 0; i < len(result)-1; i++ {
-		for j := 0; j < len(result)-i-1; j++ {
-			should := compareValues(result[j], result[j+1])
-			if ascending {
-				if should > 0 {
-					result[j], result[j+1] = result[j+1], result[j]
-				}
-			} else {
-				if should < 0 {
-					result[j], result[j+1] = result[j+1], result[j]
-				}
-			}
+	// Stable sort (works for mixed types via compareValues)
+	sort.SliceStable(result, func(i, j int) bool {
+		cmp := compareValues(result[i], result[j])
+		if ascending {
+			return cmp < 0
 		}
-	}
+		return cmp > 0
+	})
 
 	return result, nil
 }
@@ -938,23 +995,14 @@ func nativeSortBy(args ...interface{}) (interface{}, error) {
 	result := make([]interface{}, len(arr))
 	copy(result, arr)
 
-	// Sort by field
-	for i := 0; i < len(result)-1; i++ {
-		for j := 0; j < len(result)-i-1; j++ {
-			val1 := getFieldValue(result[j], field)
-			val2 := getFieldValue(result[j+1], field)
-			should := compareValues(val1, val2)
-			if ascending {
-				if should > 0 {
-					result[j], result[j+1] = result[j+1], result[j]
-				}
-			} else {
-				if should < 0 {
-					result[j], result[j+1] = result[j+1], result[j]
-				}
-			}
+	// Stable sort by field
+	sort.SliceStable(result, func(i, j int) bool {
+		cmp := compareValues(getFieldValue(result[i], field), getFieldValue(result[j], field))
+		if ascending {
+			return cmp < 0
 		}
-	}
+		return cmp > 0
+	})
 
 	return result, nil
 }
@@ -1095,6 +1143,310 @@ func getFieldValue(obj interface{}, field string) interface{} {
 		return m[field]
 	}
 	return nil
+}
+
+// valueKey produces a comparison key for primitive values (used by unique/has).
+func valueKey(v interface{}) string {
+	return fmt.Sprintf("%T:%v", v, v)
+}
+
+func nativeRange(args ...interface{}) (interface{}, error) {
+	var start, end int
+	switch len(args) {
+	case 1:
+		n, ok := toFloat(args[0])
+		if !ok {
+			return nil, fmt.Errorf("range requires number arguments")
+		}
+		start, end = 0, int(n)
+	case 2:
+		s, ok1 := toFloat(args[0])
+		e, ok2 := toFloat(args[1])
+		if !ok1 || !ok2 {
+			return nil, fmt.Errorf("range requires number arguments")
+		}
+		start, end = int(s), int(e)
+	default:
+		return nil, fmt.Errorf("range requires 1 or 2 arguments")
+	}
+	result := []interface{}{}
+	for i := start; i < end; i++ {
+		result = append(result, float64(i))
+	}
+	return result, nil
+}
+
+func nativeSum(args ...interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("sum requires 1 argument")
+	}
+	arr, ok := args[0].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("sum requires an array argument")
+	}
+	total := 0.0
+	for _, v := range arr {
+		n, ok := toFloat(v)
+		if !ok {
+			return nil, fmt.Errorf("sum requires an array of numbers")
+		}
+		total += n
+	}
+	return total, nil
+}
+
+func nativeAvg(args ...interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("avg requires 1 argument")
+	}
+	arr, ok := args[0].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("avg requires an array argument")
+	}
+	if len(arr) == 0 {
+		return float64(0), nil
+	}
+	total := 0.0
+	for _, v := range arr {
+		n, ok := toFloat(v)
+		if !ok {
+			return nil, fmt.Errorf("avg requires an array of numbers")
+		}
+		total += n
+	}
+	return total / float64(len(arr)), nil
+}
+
+func nativeUnique(args ...interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("unique requires 1 argument")
+	}
+	arr, ok := args[0].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("unique requires an array argument")
+	}
+	seen := make(map[string]bool)
+	result := []interface{}{}
+	for _, v := range arr {
+		k := valueKey(v)
+		if !seen[k] {
+			seen[k] = true
+			result = append(result, v)
+		}
+	}
+	return result, nil
+}
+
+func nativeFlatten(args ...interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("flatten requires 1 argument")
+	}
+	arr, ok := args[0].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("flatten requires an array argument")
+	}
+	result := []interface{}{}
+	for _, v := range arr {
+		if inner, ok := v.([]interface{}); ok {
+			result = append(result, inner...)
+		} else {
+			result = append(result, v)
+		}
+	}
+	return result, nil
+}
+
+func nativePush(args ...interface{}) (interface{}, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("push requires at least 2 arguments (array, item...)")
+	}
+	arr, ok := args[0].([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("push requires an array as first argument")
+	}
+	result := make([]interface{}, len(arr), len(arr)+len(args)-1)
+	copy(result, arr)
+	return append(result, args[1:]...), nil
+}
+
+func nativeConcat(args ...interface{}) (interface{}, error) {
+	result := []interface{}{}
+	for _, a := range args {
+		arr, ok := a.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("concat requires array arguments")
+		}
+		result = append(result, arr...)
+	}
+	return result, nil
+}
+
+// ============ Object functions ============
+
+func sortedKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func nativeKeys(args ...interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("keys requires 1 argument")
+	}
+	m, ok := args[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("keys requires an object argument")
+	}
+	keys := sortedKeys(m)
+	result := make([]interface{}, len(keys))
+	for i, k := range keys {
+		result[i] = k
+	}
+	return result, nil
+}
+
+func nativeValues(args ...interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("values requires 1 argument")
+	}
+	m, ok := args[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("values requires an object argument")
+	}
+	result := make([]interface{}, 0, len(m))
+	for _, k := range sortedKeys(m) {
+		result = append(result, m[k])
+	}
+	return result, nil
+}
+
+func nativeEntries(args ...interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("entries requires 1 argument")
+	}
+	m, ok := args[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("entries requires an object argument")
+	}
+	result := make([]interface{}, 0, len(m))
+	for _, k := range sortedKeys(m) {
+		result = append(result, []interface{}{k, m[k]})
+	}
+	return result, nil
+}
+
+func nativeHas(args ...interface{}) (interface{}, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("has requires 2 arguments")
+	}
+	switch coll := args[0].(type) {
+	case map[string]interface{}:
+		key, ok := args[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("has requires a string key for objects")
+		}
+		_, present := coll[key]
+		return present, nil
+	case []interface{}:
+		target := valueKey(args[1])
+		for _, item := range coll {
+			if valueKey(item) == target {
+				return true, nil
+			}
+		}
+		return false, nil
+	default:
+		return nil, fmt.Errorf("has requires an object or array as first argument")
+	}
+}
+
+// ============ Number parsing ============
+
+func nativeParseInt(args ...interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("parseInt requires 1 argument")
+	}
+	switch v := args[0].(type) {
+	case float64:
+		return math.Trunc(v), nil
+	case int:
+		return float64(v), nil
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return nil, fmt.Errorf("cannot parse '%s' as integer", v)
+		}
+		return math.Trunc(f), nil
+	default:
+		return nil, fmt.Errorf("parseInt requires a string or number")
+	}
+}
+
+func nativeParseFloat(args ...interface{}) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("parseFloat requires 1 argument")
+	}
+	switch v := args[0].(type) {
+	case float64:
+		return v, nil
+	case int:
+		return float64(v), nil
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return nil, fmt.Errorf("cannot parse '%s' as number", v)
+		}
+		return f, nil
+	default:
+		return nil, fmt.Errorf("parseFloat requires a string or number")
+	}
+}
+
+// ============ Regex ============
+
+func nativeRegexMatch(args ...interface{}) (interface{}, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("regexMatch requires 2 arguments (string, pattern)")
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("regexMatch requires a string as first argument")
+	}
+	pat, ok := args[1].(string)
+	if !ok {
+		return nil, fmt.Errorf("regexMatch requires a string pattern")
+	}
+	re, err := regexp.Compile(pat)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex: %v", err)
+	}
+	return re.MatchString(s), nil
+}
+
+func nativeRegexReplace(args ...interface{}) (interface{}, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("regexReplace requires 3 arguments (string, pattern, replacement)")
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("regexReplace requires a string as first argument")
+	}
+	pat, ok := args[1].(string)
+	if !ok {
+		return nil, fmt.Errorf("regexReplace requires a string pattern")
+	}
+	repl, ok := args[2].(string)
+	if !ok {
+		return nil, fmt.Errorf("regexReplace requires a string replacement")
+	}
+	re, err := regexp.Compile(pat)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex: %v", err)
+	}
+	return re.ReplaceAllString(s, repl), nil
 }
 
 // ============ Date/Time functions ============

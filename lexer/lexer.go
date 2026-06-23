@@ -2,15 +2,19 @@
 package lexer
 
 import (
+	"unicode"
+
 	"github.com/issadicko/kodi-script-go/token"
 )
 
 // Lexer tokenizes KodiScript source code.
+// It operates on runes (not bytes) so that Unicode identifiers and string
+// contents are handled correctly.
 type Lexer struct {
-	input        string
-	position     int         // current position in input (points to current char)
-	readPosition int         // current reading position in input (after current char)
-	ch           byte        // current char under examination
+	runes        []rune      // source decoded as runes
+	position     int         // current position in runes (points to current char)
+	readPosition int         // current reading position (after current char)
+	ch           rune        // current char under examination
 	line         int         // current line number
 	column       int         // current column number
 	prevToken    token.Token // previous token for ASI
@@ -18,7 +22,7 @@ type Lexer struct {
 
 // New creates a new Lexer for the given input.
 func New(input string) *Lexer {
-	l := &Lexer{input: input, line: 1, column: 0}
+	l := &Lexer{runes: []rune(input), line: 1, column: 0}
 	// Initialize prevToken to a type that cannot end a statement
 	// This ensures leading newlines are skipped correctly
 	l.prevToken = token.Token{Type: token.ILLEGAL}
@@ -28,10 +32,10 @@ func New(input string) *Lexer {
 
 // readChar advances the lexer by one character.
 func (l *Lexer) readChar() {
-	if l.readPosition >= len(l.input) {
+	if l.readPosition >= len(l.runes) {
 		l.ch = 0
 	} else {
-		l.ch = l.input[l.readPosition]
+		l.ch = l.runes[l.readPosition]
 	}
 	l.position = l.readPosition
 	l.readPosition++
@@ -39,11 +43,11 @@ func (l *Lexer) readChar() {
 }
 
 // peekChar returns the next character without advancing.
-func (l *Lexer) peekChar() byte {
-	if l.readPosition >= len(l.input) {
+func (l *Lexer) peekChar() rune {
+	if l.readPosition >= len(l.runes) {
 		return 0
 	}
-	return l.input[l.readPosition]
+	return l.runes[l.readPosition]
 }
 
 // NextToken returns the next token from the input.
@@ -64,17 +68,45 @@ func (l *Lexer) NextToken() token.Token {
 			tok = l.newToken(token.ASSIGN, l.ch)
 		}
 	case '+':
-		tok = l.newToken(token.PLUS, l.ch)
+		if l.peekChar() == '+' {
+			l.readChar()
+			tok = token.Token{Type: token.PLUS_PLUS, Literal: "++", Line: l.line, Column: l.column - 1}
+		} else if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.PLUS_EQ, Literal: "+=", Line: l.line, Column: l.column - 1}
+		} else {
+			tok = l.newToken(token.PLUS, l.ch)
+		}
 	case '-':
-		tok = l.newToken(token.MINUS, l.ch)
+		if l.peekChar() == '-' {
+			l.readChar()
+			tok = token.Token{Type: token.MINUS_MINUS, Literal: "--", Line: l.line, Column: l.column - 1}
+		} else if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.MINUS_EQ, Literal: "-=", Line: l.line, Column: l.column - 1}
+		} else {
+			tok = l.newToken(token.MINUS, l.ch)
+		}
 	case '*':
-		tok = l.newToken(token.ASTERISK, l.ch)
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.ASTERISK_EQ, Literal: "*=", Line: l.line, Column: l.column - 1}
+		} else {
+			tok = l.newToken(token.ASTERISK, l.ch)
+		}
 	case '/':
 		if l.peekChar() == '/' {
 			l.skipLineComment()
 			return l.NextToken()
+		} else if l.peekChar() == '*' {
+			l.skipBlockComment()
+			return l.NextToken()
+		} else if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.SLASH_EQ, Literal: "/=", Line: l.line, Column: l.column - 1}
+		} else {
+			tok = l.newToken(token.SLASH, l.ch)
 		}
-		tok = l.newToken(token.SLASH, l.ch)
 	case '%':
 		tok = l.newToken(token.PERCENT, l.ch)
 	case '!':
@@ -120,7 +152,7 @@ func (l *Lexer) NextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.ELVIS, Literal: "?:", Line: l.line, Column: l.column - 1}
 		} else {
-			tok = l.newToken(token.ILLEGAL, l.ch)
+			tok = l.newToken(token.QUESTION, l.ch)
 		}
 	case ',':
 		tok = l.newToken(token.COMMA, l.ch)
@@ -141,9 +173,19 @@ func (l *Lexer) NextToken() token.Token {
 	case ']':
 		tok = l.newToken(token.RBRACKET, l.ch)
 	case '.':
-		tok = l.newToken(token.DOT, l.ch)
-	case '"':
-		str, isTemplate := l.readString()
+		if l.peekChar() == '.' {
+			l.readChar() // consume second '.'
+			if l.peekChar() == '.' {
+				l.readChar() // consume third '.'
+				tok = token.Token{Type: token.ELLIPSIS, Literal: "...", Line: l.line, Column: l.column - 2}
+			} else {
+				tok = l.newToken(token.ILLEGAL, l.ch)
+			}
+		} else {
+			tok = l.newToken(token.DOT, l.ch)
+		}
+	case '"', '\'', '`':
+		str, isTemplate := l.readString(l.ch)
 		if isTemplate {
 			tok.Type = token.STRING_TEMPLATE
 		} else {
@@ -188,7 +230,7 @@ func (l *Lexer) NextToken() token.Token {
 }
 
 // newToken creates a new token with the given type and character.
-func (l *Lexer) newToken(tokenType token.Type, ch byte) token.Token {
+func (l *Lexer) newToken(tokenType token.Type, ch rune) token.Token {
 	return token.Token{Type: tokenType, Literal: string(ch), Line: l.line, Column: l.column}
 }
 
@@ -206,13 +248,31 @@ func (l *Lexer) skipLineComment() {
 	}
 }
 
+// skipBlockComment skips a /* ... */ comment (l.ch is '/', peek is '*').
+func (l *Lexer) skipBlockComment() {
+	l.readChar() // consume '/'
+	l.readChar() // consume '*'
+	for l.ch != 0 {
+		if l.ch == '*' && l.peekChar() == '/' {
+			l.readChar() // consume '*'
+			l.readChar() // consume '/'
+			return
+		}
+		if l.ch == '\n' {
+			l.line++
+			l.column = 0
+		}
+		l.readChar()
+	}
+}
+
 // readIdentifier reads an identifier (letter followed by letters/digits).
 func (l *Lexer) readIdentifier() string {
 	position := l.position
 	for isLetter(l.ch) || isDigit(l.ch) {
 		l.readChar()
 	}
-	return l.input[position:l.position]
+	return string(l.runes[position:l.position])
 }
 
 // readNumber reads a number (integer or float).
@@ -228,16 +288,17 @@ func (l *Lexer) readNumber() string {
 			l.readChar()
 		}
 	}
-	return l.input[position:l.position]
+	return string(l.runes[position:l.position])
 }
 
-// readString reads a string literal (with escape support).
-// Returns the string content and whether it contains template expressions.
-func (l *Lexer) readString() (string, bool) {
-	var result []byte
+// readString reads a string literal delimited by the given quote rune
+// (" ' or `), with escape support. Returns the string content and whether it
+// contains template expressions (${...}).
+func (l *Lexer) readString(quote rune) (string, bool) {
+	var result []rune
 	isTemplate := false
 	l.readChar() // skip opening quote
-	for l.ch != '"' && l.ch != 0 {
+	for l.ch != quote && l.ch != 0 {
 		if l.ch == '\\' {
 			l.readChar()
 			switch l.ch {
@@ -247,6 +308,10 @@ func (l *Lexer) readString() (string, bool) {
 				result = append(result, '\t')
 			case '"':
 				result = append(result, '"')
+			case '\'':
+				result = append(result, '\'')
+			case '`':
+				result = append(result, '`')
 			case '\\':
 				result = append(result, '\\')
 			case '$':
@@ -260,6 +325,10 @@ func (l *Lexer) readString() (string, bool) {
 			result = append(result, '$', '{')
 			l.readChar() // consume $
 		} else {
+			if l.ch == '\n' {
+				l.line++
+				l.column = 0
+			}
 			result = append(result, l.ch)
 		}
 		l.readChar()
@@ -267,10 +336,13 @@ func (l *Lexer) readString() (string, bool) {
 	return string(result), isTemplate
 }
 
-func isLetter(ch byte) bool {
-	return 'a' <= ch && ch <= 'z' || 'A' <= ch && ch <= 'Z' || ch == '_'
+// isLetter reports whether ch can start or continue an identifier.
+// Unicode letters are allowed so identifiers like "café" or "naïve" work.
+func isLetter(ch rune) bool {
+	return ch == '_' || unicode.IsLetter(ch)
 }
 
-func isDigit(ch byte) bool {
+// isDigit reports whether ch is an ASCII decimal digit.
+func isDigit(ch rune) bool {
 	return '0' <= ch && ch <= '9'
 }

@@ -6,11 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/issadicko/kodi-script-go/ast"
 	"github.com/issadicko/kodi-script-go/natives"
+	"github.com/issadicko/kodi-script-go/token"
 )
 
 // ErrMaxOperationsExceeded is returned when the operation limit is exceeded.
@@ -19,6 +20,13 @@ var ErrMaxOperationsExceeded = errors.New("max operations exceeded")
 // ErrTimeout is returned when the execution deadline is exceeded.
 var ErrTimeout = errors.New("execution timeout")
 
+// ErrStackOverflow is returned when the function call depth limit is exceeded,
+// guarding against unbounded recursion exhausting the native stack.
+var ErrStackOverflow = errors.New("maximum call depth exceeded")
+
+// maxCallDepth bounds nested user-function calls.
+const maxCallDepth = 1000
+
 // Value represents a runtime value in KodiScript.
 type Value interface{}
 
@@ -26,6 +34,17 @@ type Value interface{}
 type ReturnValue struct {
 	Value Value
 }
+
+// BreakValue signals a `break` out of the nearest enclosing loop.
+type BreakValue struct{}
+
+// ContinueValue signals a `continue` to the next iteration of the nearest loop.
+type ContinueValue struct{}
+
+var (
+	breakSignal    = &BreakValue{}
+	continueSignal = &ContinueValue{}
+)
 
 // Function represents a user-defined function.
 type Function struct {
@@ -41,17 +60,15 @@ type NativeFunction struct {
 
 // Environment holds variable bindings.
 type Environment struct {
-	store  map[string]Value
-	outer  *Environment
-	output []string // captured output from print()
+	store map[string]Value
+	outer *Environment
 }
 
 // envPool pools Environment objects to reduce allocations.
 var envPool = sync.Pool{
 	New: func() interface{} {
 		return &Environment{
-			store:  make(map[string]Value, 16),
-			output: make([]string, 0, 8),
+			store: make(map[string]Value, 16),
 		}
 	},
 }
@@ -69,7 +86,6 @@ func (e *Environment) Release() {
 	for k := range e.store {
 		delete(e.store, k)
 	}
-	e.output = e.output[:0]
 	e.outer = nil
 	envPool.Put(e)
 }
@@ -78,9 +94,8 @@ func (e *Environment) Release() {
 // Note: We don't use pooling here because closures may capture this environment.
 func NewEnclosedEnvironment(outer *Environment) *Environment {
 	return &Environment{
-		store:  make(map[string]Value, 8),
-		outer:  outer,
-		output: nil, // Enclosed envs share output with root
+		store: make(map[string]Value, 8),
+		outer: outer,
 	}
 }
 
@@ -98,23 +113,17 @@ func (e *Environment) Set(name string, val Value) {
 	e.store[name] = val
 }
 
-// GetOutput returns all captured output.
-func (e *Environment) GetOutput() []string {
-	return e.output
-}
-
-// AddOutput adds a line to captured output.
-func (e *Environment) AddOutput(line string) {
-	e.output = append(e.output, line)
-}
-
 // Interpreter evaluates AST nodes.
 type Interpreter struct {
-	env     *Environment
-	natives *natives.Registry
-	opCount int64           // Current operation count
-	maxOps  int64           // Maximum allowed operations (0 = unlimited)
-	ctx     context.Context // Context for timeout support
+	env         *Environment
+	natives     *natives.Registry
+	opCount     int64           // Current operation count
+	maxOps      int64           // Maximum allowed operations (0 = unlimited)
+	ctx         context.Context // Context for timeout support
+	output      []string        // captured output from print()
+	silentPrint bool            // when true, print() does not write to stdout
+	outputSink  func(string)    // when set, print() routes here instead of stdout
+	callDepth   int             // current user-function call depth (recursion guard)
 }
 
 // New creates a new Interpreter.
@@ -153,6 +162,11 @@ func (i *Interpreter) Eval(program *ast.Program) (Value, error) {
 		if rv, ok := val.(*ReturnValue); ok {
 			return rv.Value, nil
 		}
+		// Ignore a stray break/continue used outside any loop.
+		switch val.(type) {
+		case *BreakValue, *ContinueValue:
+			continue
+		}
 		result = val
 	}
 
@@ -161,7 +175,19 @@ func (i *Interpreter) Eval(program *ast.Program) (Value, error) {
 
 // GetOutput returns captured print() output.
 func (i *Interpreter) GetOutput() []string {
-	return i.env.GetOutput()
+	return i.output
+}
+
+// SetSilentPrint controls whether print() writes to stdout.
+// Output is always captured and available via GetOutput regardless of this setting.
+func (i *Interpreter) SetSilentPrint(silent bool) {
+	i.silentPrint = silent
+}
+
+// SetOutputSink routes print() output to the given callback instead of stdout.
+// Output is still captured and available via GetOutput.
+func (i *Interpreter) SetOutputSink(sink func(string)) {
+	i.outputSink = sink
 }
 
 // SetGlobal sets a global variable in the interpreter's environment.
@@ -215,6 +241,14 @@ func (i *Interpreter) evalStatement(stmt ast.Statement) (Value, error) {
 		return nil, err
 	}
 
+	val, err := i.evalStatementBody(stmt)
+	if err != nil {
+		return nil, i.positionError(err, stmt)
+	}
+	return val, nil
+}
+
+func (i *Interpreter) evalStatementBody(stmt ast.Statement) (Value, error) {
 	switch s := stmt.(type) {
 	case *ast.VarDecl:
 		val, err := i.evalExpression(s.Value)
@@ -230,6 +264,38 @@ func (i *Interpreter) evalStatement(stmt ast.Statement) (Value, error) {
 			return nil, err
 		}
 		i.env.Set(s.Name.Value, val)
+		return val, nil
+
+	case *ast.ArrayDestructure:
+		val, err := i.evalExpression(s.Value)
+		if err != nil {
+			return nil, err
+		}
+		arr, ok := val.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("cannot destructure non-array value (%T)", val)
+		}
+		for idx, name := range s.Names {
+			if idx < len(arr) {
+				i.env.Set(name.Value, arr[idx])
+			} else {
+				i.env.Set(name.Value, nil)
+			}
+		}
+		return val, nil
+
+	case *ast.ObjectDestructure:
+		val, err := i.evalExpression(s.Value)
+		if err != nil {
+			return nil, err
+		}
+		m, ok := val.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("cannot destructure non-object value (%T)", val)
+		}
+		for _, name := range s.Names {
+			i.env.Set(name.Value, m[name.Value])
+		}
 		return val, nil
 
 	case *ast.ExpressionStatement:
@@ -255,9 +321,96 @@ func (i *Interpreter) evalStatement(stmt ast.Statement) (Value, error) {
 	case *ast.WhileStatement:
 		return i.evalWhileStatement(s)
 
+	case *ast.TryStatement:
+		return i.evalTryStatement(s)
+
+	case *ast.BreakStatement:
+		return breakSignal, nil
+
+	case *ast.ContinueStatement:
+		return continueSignal, nil
+
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}
+}
+
+// evalTryStatement runs the protected block; on a (non-limit) runtime error it
+// binds the error message to the catch variable and runs the handler.
+func (i *Interpreter) evalTryStatement(stmt *ast.TryStatement) (Value, error) {
+	val, err := i.evalBlockStatement(stmt.Body)
+	if err == nil {
+		return val, nil
+	}
+	// Timeout / operation-limit errors are not catchable.
+	if errors.Is(err, ErrTimeout) || errors.Is(err, ErrMaxOperationsExceeded) {
+		return nil, err
+	}
+	if stmt.CatchVar != nil {
+		i.env.Set(stmt.CatchVar.Value, err.Error())
+	}
+	return i.evalBlockStatement(stmt.Catch)
+}
+
+// RuntimeError carries source position information for a runtime failure.
+type RuntimeError struct {
+	Msg  string
+	Line int
+	Col  int
+}
+
+func (e *RuntimeError) Error() string {
+	if e.Line > 0 {
+		return fmt.Sprintf("line %d, col %d: %s", e.Line, e.Col, e.Msg)
+	}
+	return e.Msg
+}
+
+// positionError attaches the failing statement's position to a plain runtime
+// error. Limit errors and already-positioned errors pass through unchanged, so
+// the innermost statement's position wins.
+func (i *Interpreter) positionError(err error, stmt ast.Statement) error {
+	if errors.Is(err, ErrTimeout) || errors.Is(err, ErrMaxOperationsExceeded) {
+		return err
+	}
+	if _, ok := err.(*RuntimeError); ok {
+		return err
+	}
+	tok := stmtToken(stmt)
+	return &RuntimeError{Msg: err.Error(), Line: tok.Line, Col: tok.Column}
+}
+
+// stmtToken returns the leading token (with position) of a statement.
+func stmtToken(stmt ast.Statement) token.Token {
+	switch s := stmt.(type) {
+	case *ast.VarDecl:
+		return s.Token
+	case *ast.ArrayDestructure:
+		return s.Token
+	case *ast.ObjectDestructure:
+		return s.Token
+	case *ast.Assignment:
+		return s.Token
+	case *ast.ExpressionStatement:
+		return s.Token
+	case *ast.IfStatement:
+		return s.Token
+	case *ast.ForStatement:
+		return s.Token
+	case *ast.WhileStatement:
+		return s.Token
+	case *ast.ReturnStatement:
+		return s.Token
+	case *ast.TryStatement:
+		return s.Token
+	case *ast.BreakStatement:
+		return s.Token
+	case *ast.ContinueStatement:
+		return s.Token
+	case *ast.BlockStatement:
+		return s.Token
+	}
+	return token.Token{}
 }
 
 func (i *Interpreter) evalForStatement(stmt *ast.ForStatement) (Value, error) {
@@ -295,9 +448,14 @@ func (i *Interpreter) evalForStatement(stmt *ast.ForStatement) (Value, error) {
 			return nil, err
 		}
 
-		// Check for return
-		if rv, ok := val.(*ReturnValue); ok {
-			return rv, nil
+		// Handle return/break/continue signals
+		switch val.(type) {
+		case *ReturnValue:
+			return val, nil
+		case *BreakValue:
+			return result, nil
+		case *ContinueValue:
+			continue
 		}
 
 		result = val
@@ -336,9 +494,14 @@ func (i *Interpreter) evalWhileStatement(stmt *ast.WhileStatement) (Value, error
 			return nil, err
 		}
 
-		// Check for return
-		if rv, ok := val.(*ReturnValue); ok {
-			return rv, nil
+		// Handle return/break/continue signals
+		switch val.(type) {
+		case *ReturnValue:
+			return val, nil
+		case *BreakValue:
+			return result, nil
+		case *ContinueValue:
+			continue
 		}
 
 		result = val
@@ -370,8 +533,9 @@ func (i *Interpreter) evalBlockStatement(block *ast.BlockStatement) (Value, erro
 		if err != nil {
 			return nil, err
 		}
-		// Propagate return values up the call stack
-		if _, ok := val.(*ReturnValue); ok {
+		// Propagate return/break/continue signals up to the nearest handler
+		switch val.(type) {
+		case *ReturnValue, *BreakValue, *ContinueValue:
 			return val, nil
 		}
 		result = val
@@ -383,7 +547,7 @@ func (i *Interpreter) evalBlockStatement(block *ast.BlockStatement) (Value, erro
 // evalStringTemplate evaluates a string template by evaluating each part
 // and concatenating the results into a single string.
 func (i *Interpreter) evalStringTemplate(tmpl *ast.StringTemplate) (Value, error) {
-	var result string
+	var sb strings.Builder
 
 	for _, part := range tmpl.Parts {
 		val, err := i.evalExpression(part)
@@ -392,10 +556,10 @@ func (i *Interpreter) evalStringTemplate(tmpl *ast.StringTemplate) (Value, error
 		}
 
 		// Convert to string using fast path
-		result += toString(val)
+		sb.WriteString(toString(val))
 	}
 
-	return result, nil
+	return sb.String(), nil
 }
 
 func (i *Interpreter) evalExpression(expr ast.Expression) (Value, error) {
@@ -435,15 +599,7 @@ func (i *Interpreter) evalExpression(expr ast.Expression) (Value, error) {
 		return i.evalUnaryExpr(e)
 
 	case *ast.ArrayLiteral:
-		elements := make([]interface{}, len(e.Elements))
-		for idx, el := range e.Elements {
-			val, err := i.evalExpression(el)
-			if err != nil {
-				return nil, err
-			}
-			elements[idx] = val
-		}
-		return elements, nil
+		return i.evalElements(e.Elements)
 
 	case *ast.ObjectLiteral:
 		pairs := make(map[string]interface{})
@@ -469,6 +625,16 @@ func (i *Interpreter) evalExpression(expr ast.Expression) (Value, error) {
 
 	case *ast.SafeAccessExpr:
 		return i.evalSafeAccess(e)
+
+	case *ast.TernaryExpr:
+		cond, err := i.evalExpression(e.Condition)
+		if err != nil {
+			return nil, err
+		}
+		if isTruthy(cond) {
+			return i.evalExpression(e.Consequent)
+		}
+		return i.evalExpression(e.Alternative)
 
 	case *ast.ElvisExpr:
 		return i.evalElvisExpr(e)
@@ -565,26 +731,9 @@ func (i *Interpreter) evalPlus(left, right Value) (Value, error) {
 	return nil, fmt.Errorf("cannot add %T and %T", left, right)
 }
 
-// toString converts a value to string efficiently without fmt.Sprintf
+// toString renders a value in canonical form (shared with natives.Stringify).
 func toString(val Value) string {
-	switch v := val.(type) {
-	case string:
-		return v
-	case float64:
-		if v == float64(int64(v)) {
-			return strconv.FormatInt(int64(v), 10)
-		}
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	case bool:
-		if v {
-			return "true"
-		}
-		return "false"
-	case nil:
-		return "null"
-	default:
-		return fmt.Sprintf("%v", val)
-	}
+	return natives.Stringify(val)
 }
 
 func (i *Interpreter) evalArithmetic(left, right Value, op string) (Value, error) {
@@ -743,62 +892,181 @@ func (i *Interpreter) evalPropertyAccess(expr *ast.PropertyAccessExpr) (Value, e
 	return i.reflectivePropertyAccess(object, expr.Property.Value)
 }
 
+// interpBuiltins holds built-in functions that need the interpreter itself
+// (to capture output or to call back into user functions). Registering them
+// in a table — rather than special-casing them in evalCallExpr — keeps the
+// dispatch data-driven: adding a new one no longer touches the evaluator, and
+// scripts/hosts can override them by name.
+var interpBuiltins map[string]func(*Interpreter, []Value) (Value, error)
+
+func init() {
+	// Populated in init() (not as a var initializer) to avoid a false
+	// initialization-cycle error: the method expressions transitively reference
+	// evalCallExpr, which reads this table.
+	interpBuiltins = map[string]func(*Interpreter, []Value) (Value, error){
+		"print":     (*Interpreter).builtinPrint,
+		"map":       (*Interpreter).builtinMap,
+		"filter":    (*Interpreter).builtinFilter,
+		"reduce":    (*Interpreter).builtinReduce,
+		"find":      (*Interpreter).builtinFind,
+		"findIndex": (*Interpreter).builtinFindIndex,
+		"some":      (*Interpreter).builtinSome,
+		"every":     (*Interpreter).builtinEvery,
+		"flatMap":   (*Interpreter).builtinFlatMap,
+	}
+}
+
 func (i *Interpreter) evalCallExpr(expr *ast.CallExpr) (Value, error) {
-	// Special handling for print (keep it special to capture output in env)
-	if ident, ok := expr.Function.(*ast.Identifier); ok && ident.Value == "print" {
-		args := make([]Value, len(expr.Arguments))
-		for idx, arg := range expr.Arguments {
-			val, err := i.evalExpression(arg)
-			if err != nil {
-				return nil, err
+	funcExpr := expr.Function
+
+	// Method-call syntax: receiver.method(args)
+	if pa, ok := funcExpr.(*ast.PropertyAccessExpr); ok {
+		return i.evalMethodCall(pa, expr.Arguments)
+	}
+
+	// Interpreter builtins (print, map, filter, ...), unless overridden by a
+	// user binding or a registered native of the same name.
+	if ident, ok := funcExpr.(*ast.Identifier); ok {
+		if b, isBuiltin := interpBuiltins[ident.Value]; isBuiltin {
+			_, inEnv := i.env.Get(ident.Value)
+			if !inEnv && i.natives.Get(ident.Value) == nil {
+				args, err := i.evalArgs(expr.Arguments)
+				if err != nil {
+					return nil, err
+				}
+				return b(i, args)
 			}
-			args[idx] = val
-		}
-
-		for _, arg := range args {
-			output := toString(arg)
-			fmt.Println(output)
-			i.env.AddOutput(output)
-		}
-		return nil, nil
-	}
-
-	// Special handling for higher-order array functions
-	if ident, ok := expr.Function.(*ast.Identifier); ok {
-		switch ident.Value {
-		case "map":
-			return i.evalMapFunction(expr)
-		case "filter":
-			return i.evalFilterFunction(expr)
-		case "reduce":
-			return i.evalReduceFunction(expr)
-		case "find":
-			return i.evalFindFunction(expr)
-		case "findIndex":
-			return i.evalFindIndexFunction(expr)
 		}
 	}
 
-	function, err := i.evalExpression(expr.Function)
+	// Default: evaluate the callee then apply it (covers user functions and
+	// registry natives resolved through evalExpression).
+	function, err := i.evalExpression(funcExpr)
+	if err != nil {
+		return nil, err
+	}
+	args, err := i.evalArgs(expr.Arguments)
+	if err != nil {
+		return nil, err
+	}
+	return i.applyFunction(function, args)
+}
+
+// evalMethodCall implements method-call syntax: receiver.method(args).
+func (i *Interpreter) evalMethodCall(pa *ast.PropertyAccessExpr, argExprs []ast.Expression) (Value, error) {
+	receiver, err := i.evalExpression(pa.Object)
+	if err != nil {
+		return nil, err
+	}
+	method := pa.Property.Value
+
+	args, err := i.evalArgs(argExprs)
 	if err != nil {
 		return nil, err
 	}
 
-	args := make([]Value, len(expr.Arguments))
-	for idx, arg := range expr.Arguments {
-		val, err := i.evalExpression(arg)
-		if err != nil {
-			return nil, err
+	// 1. A callable stored under that key on an object wins (obj.fn()).
+	if m, ok := receiver.(map[string]interface{}); ok {
+		if v, present := m[method]; present && isCallable(v) {
+			return i.applyFunction(v, args)
 		}
-		args[idx] = val
 	}
 
-	return i.applyFunction(function, args)
+	// 2. Interpreter builtin invoked as a method: prepend the receiver.
+	if b, ok := interpBuiltins[method]; ok {
+		return b(i, prepend(receiver, args))
+	}
+
+	// 3. Registry native invoked as a method: prepend the receiver.
+	if nfn := i.natives.Get(method); nfn != nil {
+		return i.applyNative(nfn, prepend(receiver, args))
+	}
+
+	// 4. Bound Go object: method/field via reflection.
+	if receiver == nil {
+		return nil, fmt.Errorf("cannot call method '%s' on null", method)
+	}
+	if _, isMap := receiver.(map[string]interface{}); !isMap {
+		fnVal, rerr := i.reflectivePropertyAccess(receiver, method)
+		if rerr != nil {
+			return nil, rerr
+		}
+		return i.applyFunction(fnVal, args)
+	}
+
+	return nil, fmt.Errorf("undefined method '%s'", method)
+}
+
+// evalArgs evaluates a list of argument expressions (expanding spreads).
+func (i *Interpreter) evalArgs(argExprs []ast.Expression) ([]Value, error) {
+	elems, err := i.evalElements(argExprs)
+	if err != nil {
+		return nil, err
+	}
+	args := make([]Value, len(elems))
+	for idx, e := range elems {
+		args[idx] = e
+	}
+	return args, nil
+}
+
+// evalElements evaluates a list of expressions, expanding any ...spread elements.
+func (i *Interpreter) evalElements(exprs []ast.Expression) ([]interface{}, error) {
+	result := make([]interface{}, 0, len(exprs))
+	for _, el := range exprs {
+		if sp, ok := el.(*ast.SpreadExpr); ok {
+			v, err := i.evalExpression(sp.Value)
+			if err != nil {
+				return nil, err
+			}
+			arr, ok := v.([]interface{})
+			if !ok {
+				return nil, fmt.Errorf("spread operator requires an array, got %T", v)
+			}
+			result = append(result, arr...)
+		} else {
+			v, err := i.evalExpression(el)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, v)
+		}
+	}
+	return result, nil
+}
+
+// applyNative calls a registry native function with KodiScript values.
+func (i *Interpreter) applyNative(fn natives.NativeFunc, args []Value) (Value, error) {
+	ifaceArgs := make([]interface{}, len(args))
+	for idx, a := range args {
+		ifaceArgs[idx] = a
+	}
+	return fn(ifaceArgs...)
+}
+
+func isCallable(v Value) bool {
+	switch v.(type) {
+	case *Function, *NativeFunction:
+		return true
+	}
+	return false
+}
+
+func prepend(head Value, tail []Value) []Value {
+	out := make([]Value, 0, len(tail)+1)
+	out = append(out, head)
+	return append(out, tail...)
 }
 
 func (i *Interpreter) applyFunction(fn Value, args []Value) (Value, error) {
 	switch function := fn.(type) {
 	case *Function:
+		if i.callDepth >= maxCallDepth {
+			return nil, ErrStackOverflow
+		}
+		i.callDepth++
+		defer func() { i.callDepth-- }()
+
 		extendedEnv := NewEnclosedEnvironment(function.Env)
 		for idx, param := range function.Parameters {
 			if idx < len(args) {
@@ -814,6 +1082,11 @@ func (i *Interpreter) applyFunction(fn Value, args []Value) (Value, error) {
 		}
 		if rv, ok := val.(*ReturnValue); ok {
 			return rv.Value, nil
+		}
+		// A stray break/continue must not escape the function as a value.
+		switch val.(type) {
+		case *BreakValue, *ContinueValue:
+			return nil, nil
 		}
 		return val, nil
 
@@ -894,27 +1167,31 @@ func toNumber(val Value) (float64, bool) {
 	return 0, false
 }
 
-// ============ Higher-order array functions ============
+// ============ Interpreter builtins (need interpreter context) ============
 
-func (i *Interpreter) evalMapFunction(expr *ast.CallExpr) (Value, error) {
-	if len(expr.Arguments) < 2 {
+// builtinPrint writes each argument to stdout (unless silenced) and captures it.
+func (i *Interpreter) builtinPrint(args []Value) (Value, error) {
+	for _, arg := range args {
+		output := toString(arg)
+		if i.outputSink != nil {
+			i.outputSink(output)
+		} else if !i.silentPrint {
+			fmt.Println(output)
+		}
+		i.output = append(i.output, output)
+	}
+	return nil, nil
+}
+
+func (i *Interpreter) builtinMap(args []Value) (Value, error) {
+	if len(args) < 2 {
 		return nil, fmt.Errorf("map requires 2 arguments: array and function")
 	}
-
-	arrVal, err := i.evalExpression(expr.Arguments[0])
-	if err != nil {
-		return nil, err
-	}
-	arr, ok := arrVal.([]interface{})
+	arr, ok := args[0].([]interface{})
 	if !ok {
 		return []interface{}{}, nil
 	}
-
-	fnVal, err := i.evalExpression(expr.Arguments[1])
-	if err != nil {
-		return nil, err
-	}
-
+	fnVal := args[1]
 	result := make([]interface{}, len(arr))
 	for idx, item := range arr {
 		val, err := i.applyFunction(fnVal, []Value{item, float64(idx)})
@@ -926,25 +1203,15 @@ func (i *Interpreter) evalMapFunction(expr *ast.CallExpr) (Value, error) {
 	return result, nil
 }
 
-func (i *Interpreter) evalFilterFunction(expr *ast.CallExpr) (Value, error) {
-	if len(expr.Arguments) < 2 {
+func (i *Interpreter) builtinFilter(args []Value) (Value, error) {
+	if len(args) < 2 {
 		return nil, fmt.Errorf("filter requires 2 arguments: array and function")
 	}
-
-	arrVal, err := i.evalExpression(expr.Arguments[0])
-	if err != nil {
-		return nil, err
-	}
-	arr, ok := arrVal.([]interface{})
+	arr, ok := args[0].([]interface{})
 	if !ok {
 		return []interface{}{}, nil
 	}
-
-	fnVal, err := i.evalExpression(expr.Arguments[1])
-	if err != nil {
-		return nil, err
-	}
-
+	fnVal := args[1]
 	result := []interface{}{}
 	for idx, item := range arr {
 		val, err := i.applyFunction(fnVal, []Value{item, float64(idx)})
@@ -958,30 +1225,17 @@ func (i *Interpreter) evalFilterFunction(expr *ast.CallExpr) (Value, error) {
 	return result, nil
 }
 
-func (i *Interpreter) evalReduceFunction(expr *ast.CallExpr) (Value, error) {
-	if len(expr.Arguments) < 3 {
+func (i *Interpreter) builtinReduce(args []Value) (Value, error) {
+	if len(args) < 3 {
 		return nil, fmt.Errorf("reduce requires 3 arguments: array, function, and initial value")
 	}
-
-	arrVal, err := i.evalExpression(expr.Arguments[0])
-	if err != nil {
-		return nil, err
-	}
-	arr, ok := arrVal.([]interface{})
+	arr, ok := args[0].([]interface{})
 	if !ok {
 		return nil, nil
 	}
-
-	fnVal, err := i.evalExpression(expr.Arguments[1])
-	if err != nil {
-		return nil, err
-	}
-
-	accumulator, err := i.evalExpression(expr.Arguments[2])
-	if err != nil {
-		return nil, err
-	}
-
+	fnVal := args[1]
+	accumulator := args[2]
+	var err error
 	for idx, item := range arr {
 		accumulator, err = i.applyFunction(fnVal, []Value{accumulator, item, float64(idx)})
 		if err != nil {
@@ -991,25 +1245,15 @@ func (i *Interpreter) evalReduceFunction(expr *ast.CallExpr) (Value, error) {
 	return accumulator, nil
 }
 
-func (i *Interpreter) evalFindFunction(expr *ast.CallExpr) (Value, error) {
-	if len(expr.Arguments) < 2 {
+func (i *Interpreter) builtinFind(args []Value) (Value, error) {
+	if len(args) < 2 {
 		return nil, fmt.Errorf("find requires 2 arguments: array and function")
 	}
-
-	arrVal, err := i.evalExpression(expr.Arguments[0])
-	if err != nil {
-		return nil, err
-	}
-	arr, ok := arrVal.([]interface{})
+	arr, ok := args[0].([]interface{})
 	if !ok {
 		return nil, nil
 	}
-
-	fnVal, err := i.evalExpression(expr.Arguments[1])
-	if err != nil {
-		return nil, err
-	}
-
+	fnVal := args[1]
 	for idx, item := range arr {
 		val, err := i.applyFunction(fnVal, []Value{item, float64(idx)})
 		if err != nil {
@@ -1022,25 +1266,81 @@ func (i *Interpreter) evalFindFunction(expr *ast.CallExpr) (Value, error) {
 	return nil, nil
 }
 
-func (i *Interpreter) evalFindIndexFunction(expr *ast.CallExpr) (Value, error) {
-	if len(expr.Arguments) < 2 {
+func (i *Interpreter) builtinSome(args []Value) (Value, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("some requires 2 arguments: array and function")
+	}
+	arr, ok := args[0].([]interface{})
+	if !ok {
+		return false, nil
+	}
+	fnVal := args[1]
+	for idx, item := range arr {
+		val, err := i.applyFunction(fnVal, []Value{item, float64(idx)})
+		if err != nil {
+			return nil, err
+		}
+		if isTruthy(val) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (i *Interpreter) builtinEvery(args []Value) (Value, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("every requires 2 arguments: array and function")
+	}
+	arr, ok := args[0].([]interface{})
+	if !ok {
+		return true, nil
+	}
+	fnVal := args[1]
+	for idx, item := range arr {
+		val, err := i.applyFunction(fnVal, []Value{item, float64(idx)})
+		if err != nil {
+			return nil, err
+		}
+		if !isTruthy(val) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (i *Interpreter) builtinFlatMap(args []Value) (Value, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("flatMap requires 2 arguments: array and function")
+	}
+	arr, ok := args[0].([]interface{})
+	if !ok {
+		return []interface{}{}, nil
+	}
+	fnVal := args[1]
+	result := []interface{}{}
+	for idx, item := range arr {
+		val, err := i.applyFunction(fnVal, []Value{item, float64(idx)})
+		if err != nil {
+			return nil, err
+		}
+		if inner, ok := val.([]interface{}); ok {
+			result = append(result, inner...)
+		} else {
+			result = append(result, val)
+		}
+	}
+	return result, nil
+}
+
+func (i *Interpreter) builtinFindIndex(args []Value) (Value, error) {
+	if len(args) < 2 {
 		return nil, fmt.Errorf("findIndex requires 2 arguments: array and function")
 	}
-
-	arrVal, err := i.evalExpression(expr.Arguments[0])
-	if err != nil {
-		return nil, err
-	}
-	arr, ok := arrVal.([]interface{})
+	arr, ok := args[0].([]interface{})
 	if !ok {
 		return float64(-1), nil
 	}
-
-	fnVal, err := i.evalExpression(expr.Arguments[1])
-	if err != nil {
-		return nil, err
-	}
-
+	fnVal := args[1]
 	for idx, item := range arr {
 		val, err := i.applyFunction(fnVal, []Value{item, float64(idx)})
 		if err != nil {

@@ -4,7 +4,52 @@ package interpreter
 import (
 	"fmt"
 	"reflect"
+	"sync"
 )
+
+// memberKey identifies a member lookup (concrete type + name).
+type memberKey struct {
+	typ  reflect.Type
+	name string
+}
+
+// memberInfo caches how a name resolves on a type, so the method/field scan
+// runs once per (type, name) instead of on every property access.
+type memberInfo struct {
+	isMethod   bool
+	methodPtr  bool // method belongs to the pointer method set
+	isField    bool
+	fieldIndex []int // index path for FieldByIndex
+}
+
+var memberCache sync.Map // map[memberKey]memberInfo
+
+// resolveMember returns (cached) routing info for accessing name on val's type.
+func resolveMember(val reflect.Value, name string) memberInfo {
+	key := memberKey{val.Type(), name}
+	if cached, ok := memberCache.Load(key); ok {
+		return cached.(memberInfo)
+	}
+
+	info := memberInfo{}
+	if _, ok := val.Type().MethodByName(name); ok {
+		info.isMethod = true
+	} else if val.CanAddr() {
+		if _, ok := reflect.PtrTo(val.Type()).MethodByName(name); ok {
+			info.isMethod = true
+			info.methodPtr = true
+		}
+	}
+	if !info.isMethod && val.Kind() == reflect.Struct {
+		if f, ok := val.Type().FieldByName(name); ok && f.PkgPath == "" {
+			info.isField = true
+			info.fieldIndex = f.Index
+		}
+	}
+
+	memberCache.Store(key, info)
+	return info
+}
 
 // reflectivePropertyAccess uses reflection to access properties on Go objects.
 func (i *Interpreter) reflectivePropertyAccess(object Value, propertyName string) (Value, error) {
@@ -18,10 +63,16 @@ func (i *Interpreter) reflectivePropertyAccess(object Value, propertyName string
 		val = val.Elem()
 	}
 
-	// Try to find method first (methods have priority over fields)
-	method := findMethod(val, propertyName)
-	if method.IsValid() {
-		// Return a wrapper function that can be called from KodiScript
+	info := resolveMember(val, propertyName)
+
+	// Methods have priority over fields.
+	if info.isMethod {
+		var method reflect.Value
+		if info.methodPtr {
+			method = val.Addr().MethodByName(propertyName)
+		} else {
+			method = val.MethodByName(propertyName)
+		}
 		return &NativeFunction{
 			Fn: func(args ...interface{}) (interface{}, error) {
 				return callReflectedMethod(method, args)
@@ -29,34 +80,14 @@ func (i *Interpreter) reflectivePropertyAccess(object Value, propertyName string
 		}, nil
 	}
 
-	// Try to access field
-	if val.Kind() == reflect.Struct {
-		field := val.FieldByName(propertyName)
+	if info.isField {
+		field := val.FieldByIndex(info.fieldIndex)
 		if field.IsValid() && field.CanInterface() {
 			return field.Interface(), nil
 		}
 	}
 
 	return nil, fmt.Errorf("property or method '%s' not found on %T", propertyName, object)
-}
-
-// findMethod tries to find a method on a value or its pointer type.
-func findMethod(val reflect.Value, name string) reflect.Value {
-	// Try on the value itself
-	method := val.MethodByName(name)
-	if method.IsValid() {
-		return method
-	}
-
-	// Try on the pointer type if not already a pointer
-	if val.CanAddr() {
-		method = val.Addr().MethodByName(name)
-		if method.IsValid() {
-			return method
-		}
-	}
-
-	return reflect.Value{}
 }
 
 // callReflectedMethod calls a Go method via reflection, converting args appropriately.
