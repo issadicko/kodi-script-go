@@ -707,8 +707,12 @@ func (p *Parser) parseArrayLiteral() ast.Expression {
 	return array
 }
 
+// parseExpressionList reads the elements of an array literal or of a call up to
+// `end`. Line breaks around elements and a trailing comma are accepted, so a
+// literal can be laid out one element per line.
 func (p *Parser) parseExpressionList(end token.Type) []ast.Expression {
 	list := []ast.Expression{}
+	p.skipNewlines()
 
 	if p.peekTokenIs(end) {
 		p.nextToken()
@@ -717,11 +721,17 @@ func (p *Parser) parseExpressionList(end token.Type) []ast.Expression {
 
 	p.nextToken()
 	list = append(list, p.parseListElement())
+	p.skipNewlines()
 
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken()
+		p.skipNewlines()
+		if p.peekTokenIs(end) {
+			break
+		}
 		p.nextToken()
 		list = append(list, p.parseListElement())
+		p.skipNewlines()
 	}
 
 	if !p.expectPeek(end) {
@@ -729,6 +739,14 @@ func (p *Parser) parseExpressionList(end token.Type) []ast.Expression {
 	}
 
 	return list
+}
+
+// skipNewlines drops NEWLINE tokens in peek position, where a line break does
+// not end a statement.
+func (p *Parser) skipNewlines() {
+	for p.peekTokenIs(token.NEWLINE) {
+		p.nextToken()
+	}
 }
 
 // parseListElement parses one element of an array literal or argument list,
@@ -958,25 +976,5 @@ func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
 }
 
 func (p *Parser) parseCallArguments() []ast.Expression {
-	args := []ast.Expression{}
-
-	if p.peekTokenIs(token.RPAREN) {
-		p.nextToken()
-		return args
-	}
-
-	p.nextToken()
-	args = append(args, p.parseListElement())
-
-	for p.peekTokenIs(token.COMMA) {
-		p.nextToken()
-		p.nextToken()
-		args = append(args, p.parseListElement())
-	}
-
-	if !p.expectPeek(token.RPAREN) {
-		return nil
-	}
-
-	return args
+	return p.parseExpressionList(token.RPAREN)
 }

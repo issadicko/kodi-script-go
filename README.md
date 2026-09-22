@@ -23,7 +23,7 @@ Imaginez : un admin qui configure des règles de validation, un workflow qui s'a
 ## Installation
 
 ```bash
-go get github.com/issadicko/kodi-script-go@v0.0.1
+go get github.com/issadicko/kodi-script-go@v0.2.0
 ```
 
 ## Utilisation Rapide
