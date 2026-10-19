@@ -913,6 +913,14 @@ func init() {
 		"some":      (*Interpreter).builtinSome,
 		"every":     (*Interpreter).builtinEvery,
 		"flatMap":   (*Interpreter).builtinFlatMap,
+		"groupBy":   (*Interpreter).builtinGroupBy,
+		"countBy":   (*Interpreter).builtinCountBy,
+		"indexBy":   (*Interpreter).builtinIndexBy,
+		"uniqueBy":  (*Interpreter).builtinUniqueBy,
+		"sumBy":     (*Interpreter).builtinSumBy,
+		"minBy":     (*Interpreter).builtinMinBy,
+		"maxBy":     (*Interpreter).builtinMaxBy,
+		"partition": (*Interpreter).builtinPartition,
 	}
 }
 

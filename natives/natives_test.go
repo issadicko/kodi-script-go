@@ -705,10 +705,10 @@ func TestDateTimeFunctions(t *testing.T) {
 		}
 		// Should return a valid timestamp
 
-		// Invalid date
-		_, err = nativeTimestamp("invalid")
-		if err == nil {
-			t.Error("expected error for invalid date")
+		// An unreadable date yields null, like every date function.
+		result, err = nativeTimestamp("invalid")
+		if err != nil || result != nil {
+			t.Errorf("expected null for invalid date, got %v, %v", result, err)
 		}
 	})
 

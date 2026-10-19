@@ -23,7 +23,7 @@ Imaginez : un admin qui configure des règles de validation, un workflow qui s'a
 ## Installation
 
 ```bash
-go get github.com/issadicko/kodi-script-go@v0.2.0
+go get github.com/issadicko/kodi-script-go@v0.3.0
 ```
 
 ## Utilisation Rapide
@@ -139,6 +139,29 @@ result := kodi.Run(`
 | `first(arr)` | Premier élément |
 | `last(arr)` | Dernier élément |
 | `slice(arr, start, [end])` | Extrait une portion |
+| `range([start], end)`, `sum(arr)`, `avg(arr)` | Intervalle, somme, moyenne |
+| `unique(arr)`, `flatten(arr)`, `push(arr, ...)`, `concat(...)` | Dédoublonne, aplatit, ajoute, concatène |
+| `chunk(arr, n)` | Découpe en tableaux de `n` éléments |
+| `compact(arr)` | Retire les `null` |
+| `pluck(arr, chemin)` | La valeur au chemin (`"client.ville"`) pour chaque élément |
+| `zip(arr1, arr2, ...)` | `[[a0, b0], [a1, b1], …]`, à la longueur du plus court |
+| `fromEntries(paires)` | Objet bâti depuis des paires `[clé, valeur]` |
+| `difference(a, b)`, `intersection(a, b)`, `union(...)` | Opérations d'ensemble (type et valeur comparés) |
+
+Un tableau `null` se lit comme un tableau vide.
+
+### Regroupements
+La clé est un **chemin** lu sur chaque élément, ou une **fonction** `fn(item, index)`.
+
+| Fonction | Description |
+|----------|-------------|
+| `groupBy(arr, clé)` | Objet `{clé: [éléments]}` |
+| `countBy(arr, clé)` | Objet `{clé: nombre}` |
+| `indexBy(arr, clé)` | Objet `{clé: élément}`, le dernier l'emporte |
+| `uniqueBy(arr, clé)` | Le premier élément de chaque clé |
+| `sumBy(arr, clé)` | Somme des clés (les `null` sont ignorées) |
+| `minBy(arr, clé)`, `maxBy(arr, clé)` | L'élément de plus petite / plus grande clé |
+| `partition(arr, clé)` | `[[clé vraie], [les autres]]` |
 
 ### Types
 | Fonction | Description |
@@ -150,20 +173,29 @@ result := kodi.Run(`
 | `isBool(val)` | Vérifie si booléen |
 
 ### Date/Heure
+Une **date** est un nombre de millisecondes depuis 1970 (UTC) ou un texte ISO-8601 : `2026-10-19`,
+`2026-10-19T08:30`, `2026-10-19T08:30:00.250Z`, `2026-10-19 08:30:00+01:00`. Sans fuseau, le texte
+est en UTC. Une date illisible (`2026-02-29`, `"abc"`, `null`) donne `null`. Tous les calculs de
+calendrier se font en **UTC** ; une fonction qui produit une date rend des millisecondes.
+
 | Fonction | Description |
 |----------|-------------|
-| `now()` | Timestamp actuel en ms |
-| `date()` | Date actuelle (YYYY-MM-DD) |
-| `time()` | Heure actuelle (HH:MM:SS) |
-| `datetime()` | Date/heure ISO 8601 |
-| `timestamp([str])` | Parse une date ou retourne timestamp actuel |
-| `formatDate(ts, [fmt])` | Formate un timestamp |
-| `year([ts])`, `month([ts])`, `day([ts])` | Extrait année/mois/jour |
-| `hour([ts])`, `minute([ts])`, `second([ts])` | Extrait h/min/sec |
-| `dayOfWeek([ts])` | Jour de semaine (0=Dimanche) |
-| `addDays(ts, n)` | Ajoute n jours |
-| `addHours(ts, n)` | Ajoute n heures |
-| `diffDays(ts1, ts2)` | Différence en jours |
+| `now()` | Instant actuel en ms |
+| `date()`, `time()`, `datetime()` | Date `YYYY-MM-DD`, heure `HH:mm:ss`, instant ISO (UTC) |
+| `timestamp([date])` | La date en ms (maintenant sans argument) |
+| `isDate(valeur)` | Vrai si la valeur se lit comme une date |
+| `parseDate(texte, format)` | Lit `"19/10/2026"` avec `"DD/MM/YYYY"` ; `null` si le texte ne suit pas le format |
+| `toISO(date)` | `YYYY-MM-DDTHH:mm:ss.SSSZ` |
+| `formatDate(date, [fmt])` | Jetons `YYYY`, `YY`, `MM`, `DD`, `HH`, `mm`, `ss`, `SSS` |
+| `year`, `month`, `day`, `hour`, `minute`, `second` `([date])` | Champs de la date |
+| `dayOfWeek([date])` | Jour de semaine (0 = dimanche) |
+| `daysInMonth(date)`, `isWeekend(date)` | Jours du mois, samedi ou dimanche |
+| `addDays`, `addHours`, `addMinutes`, `addSeconds` `(date, n)` | Date décalée |
+| `addMonths(date, n)`, `addYears(date, n)` | Décalage de calendrier ; un jour absent du mois visé devient son dernier jour |
+| `diffDays`, `diffHours`, `diffMinutes` `(a, b)` | Unités entières de `a` à `b` (négatif si `b` précède) |
+| `diffMonths(a, b)`, `diffYears(a, b)` | Mois / années de calendrier entiers de `a` à `b` |
+| `age(naissance, [à])` | Années entières révolues (à maintenant par défaut) |
+| `startOfDay`, `endOfDay`, `startOfMonth`, `endOfMonth` `(date)` | Bornes de la période, en ms |
 
 ## 🔌 Extensibilité
 
