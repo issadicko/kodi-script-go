@@ -27,6 +27,15 @@ var ErrStackOverflow = errors.New("maximum call depth exceeded")
 // maxCallDepth bounds nested user-function calls.
 const maxCallDepth = 1000
 
+// maxExprDepth bounds the evaluator's expression-recursion depth. A left- or
+// right-associative chain (e.g. a long `a + a + a + ...`) parses iteratively but
+// builds a deeply nested AST, and deep call recursion nests here too; without
+// this bound a large enough expression overflows the native stack and kills the
+// process with a fatal error that recover() cannot catch. It is far above any
+// realistic script, and above the function-call depth a recursive script may
+// legitimately reach.
+const maxExprDepth = 4000
+
 // Value represents a runtime value in KodiScript.
 type Value interface{}
 
@@ -124,6 +133,7 @@ type Interpreter struct {
 	silentPrint bool            // when true, print() does not write to stdout
 	outputSink  func(string)    // when set, print() routes here instead of stdout
 	callDepth   int             // current user-function call depth (recursion guard)
+	exprDepth   int             // current expression-recursion depth (stack guard)
 }
 
 // New creates a new Interpreter.
@@ -562,7 +572,22 @@ func (i *Interpreter) evalStringTemplate(tmpl *ast.StringTemplate) (Value, error
 	return sb.String(), nil
 }
 
+// evalExpression bounds recursion depth before dispatching, so a deeply nested
+// expression returns an error instead of overflowing the native stack. The
+// counter is decremented inline (not via defer) to keep this hot path cheap; a
+// panic would abandon the per-execution interpreter anyway, so the counter never
+// outlives it.
 func (i *Interpreter) evalExpression(expr ast.Expression) (Value, error) {
+	if i.exprDepth >= maxExprDepth {
+		return nil, ErrStackOverflow
+	}
+	i.exprDepth++
+	val, err := i.evalExpressionNode(expr)
+	i.exprDepth--
+	return val, err
+}
+
+func (i *Interpreter) evalExpressionNode(expr ast.Expression) (Value, error) {
 	switch e := expr.(type) {
 	case *ast.NumberLiteral:
 		return e.Value, nil
@@ -713,12 +738,21 @@ func (i *Interpreter) evalBinaryExpr(expr *ast.BinaryExpr) (Value, error) {
 }
 
 func (i *Interpreter) evalPlus(left, right Value) (Value, error) {
-	// String concatenation with fast path
+	// String concatenation with fast path. The result length is bounded so a
+	// doubling loop (a = a + a) cannot exhaust memory in a few operations.
 	if ls, ok := left.(string); ok {
-		return ls + toString(right), nil
+		rs := toString(right)
+		if len(ls)+len(rs) > natives.MaxValueSize {
+			return nil, fmt.Errorf("string too large (max %d)", natives.MaxValueSize)
+		}
+		return ls + rs, nil
 	}
 	if rs, ok := right.(string); ok {
-		return toString(left) + rs, nil
+		ls := toString(left)
+		if len(ls)+len(rs) > natives.MaxValueSize {
+			return nil, fmt.Errorf("string too large (max %d)", natives.MaxValueSize)
+		}
+		return ls + rs, nil
 	}
 
 	// Numeric addition
@@ -1038,6 +1072,11 @@ func (i *Interpreter) evalElements(exprs []ast.Expression) ([]interface{}, error
 				return nil, err
 			}
 			result = append(result, v)
+		}
+		// Bound the array size so a doubling spread ([...a, ...a]) cannot
+		// exhaust memory in a few operations.
+		if len(result) > natives.MaxValueSize {
+			return nil, fmt.Errorf("array too large (max %d)", natives.MaxValueSize)
 		}
 	}
 	return result, nil

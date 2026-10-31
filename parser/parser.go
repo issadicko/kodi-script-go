@@ -49,12 +49,21 @@ var precedences = map[token.Type]int{
 	token.SAFE_ACCESS: ACCESS,
 }
 
+// maxParseDepth bounds parser recursion (nested expressions and blocks). Without
+// it, pathological nesting — thousands of nested parentheses, prefix operators or
+// braces — overflows the native stack and kills the process with a fatal error
+// that recover() cannot catch; a parse-only host such as form-builder is hit too.
+// It is far above any realistic script.
+const maxParseDepth = 4000
+
 // Parser parses tokens from a lexer into an AST.
 type Parser struct {
 	l         *lexer.Lexer
 	curToken  token.Token
 	peekToken token.Token
 	errors    []string
+
+	depth int // current recursion depth, bounded by maxParseDepth
 
 	prefixParseFns map[token.Type]prefixParseFn
 	infixParseFns  map[token.Type]infixParseFn
@@ -526,8 +535,16 @@ func (p *Parser) parseIfStatement() *ast.IfStatement {
 }
 
 func (p *Parser) parseBlockStatement() *ast.BlockStatement {
+	p.depth++
+	defer func() { p.depth-- }()
+
 	block := &ast.BlockStatement{Token: p.curToken}
 	block.Statements = []ast.Statement{}
+
+	if p.depth > maxParseDepth {
+		p.addError("block nested too deeply (max %d)", maxParseDepth)
+		return block
+	}
 
 	p.nextToken() // consume the opening brace
 
@@ -556,6 +573,13 @@ func (p *Parser) parseExpressionStatement() *ast.ExpressionStatement {
 }
 
 func (p *Parser) parseExpression(precedence int) ast.Expression {
+	p.depth++
+	defer func() { p.depth-- }()
+	if p.depth > maxParseDepth {
+		p.addError("expression nested too deeply (max %d)", maxParseDepth)
+		return nil
+	}
+
 	prefix := p.prefixParseFns[p.curToken.Type]
 	if prefix == nil {
 		p.addError("no prefix parse function for %s", p.curToken.Type)

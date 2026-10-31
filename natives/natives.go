@@ -467,12 +467,23 @@ func nativeIndexOf(args ...interface{}) (interface{}, error) {
 	return float64(strings.Index(s, substr)), nil
 }
 
+// MaxValueSize bounds the size of a value a single operation may build — a
+// string's length in bytes, or an array's element count. Without it, one
+// operation such as repeat(s, 6e9), range(2e9), padLeft(s, 9e9) or a doubling
+// loop (a = a + a) exhausts memory and kills the process; the operation limit
+// never bites because it counts operations, not the memory each one allocates.
+// It is far above any realistic value a rule, template or composition produces.
+const MaxValueSize = 1 << 20 // 1,048,576
+
 func nativePadLeft(args ...interface{}) (interface{}, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("padLeft requires at least 2 arguments")
 	}
 	s := Stringify(args[0])
 	length := int(asFloat(args[1]))
+	if length > MaxValueSize {
+		return nil, fmt.Errorf("padLeft length too large (max %d)", MaxValueSize)
+	}
 	padChar := " "
 	if len(args) > 2 && args[2] != nil {
 		padChar = fmt.Sprintf("%v", args[2])
@@ -480,10 +491,10 @@ func nativePadLeft(args ...interface{}) (interface{}, error) {
 			padChar = " "
 		}
 	}
-	for len(s) < length {
-		s = padChar[:1] + s
+	if len(s) >= length {
+		return s, nil
 	}
-	return s, nil
+	return strings.Repeat(padChar[:1], length-len(s)) + s, nil
 }
 
 func nativePadRight(args ...interface{}) (interface{}, error) {
@@ -492,6 +503,9 @@ func nativePadRight(args ...interface{}) (interface{}, error) {
 	}
 	s := Stringify(args[0])
 	length := int(asFloat(args[1]))
+	if length > MaxValueSize {
+		return nil, fmt.Errorf("padRight length too large (max %d)", MaxValueSize)
+	}
 	padChar := " "
 	if len(args) > 2 && args[2] != nil {
 		padChar = fmt.Sprintf("%v", args[2])
@@ -499,10 +513,10 @@ func nativePadRight(args ...interface{}) (interface{}, error) {
 			padChar = " "
 		}
 	}
-	for len(s) < length {
-		s = s + padChar[:1]
+	if len(s) >= length {
+		return s, nil
 	}
-	return s, nil
+	return s + strings.Repeat(padChar[:1], length-len(s)), nil
 }
 
 func nativeRepeat(args ...interface{}) (interface{}, error) {
@@ -513,6 +527,9 @@ func nativeRepeat(args ...interface{}) (interface{}, error) {
 	count := int(asFloat(args[1]))
 	if count < 0 {
 		count = 0
+	}
+	if count > MaxValueSize || len(s) > MaxValueSize || int64(len(s))*int64(count) > int64(MaxValueSize) {
+		return nil, fmt.Errorf("repeat result too large (max %d)", MaxValueSize)
 	}
 	return strings.Repeat(s, count), nil
 }
@@ -1193,6 +1210,9 @@ func nativeRange(args ...interface{}) (interface{}, error) {
 		start, end = int(s), int(e)
 	default:
 		return nil, fmt.Errorf("range requires 1 or 2 arguments")
+	}
+	if int64(end)-int64(start) > int64(MaxValueSize) {
+		return nil, fmt.Errorf("range too large (max %d)", MaxValueSize)
 	}
 	result := []interface{}{}
 	for i := start; i < end; i++ {
