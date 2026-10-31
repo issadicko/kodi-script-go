@@ -4,6 +4,7 @@ package interpreter
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 )
 
@@ -51,6 +52,31 @@ func resolveMember(val reflect.Value, name string) memberInfo {
 	return info
 }
 
+// enginePkgPrefix is the import path of the KodiScript engine module root,
+// derived from this package's own path so a fork or vendored copy keeps the
+// guard working. The engine's internal packages all sit beneath it.
+var enginePkgPrefix = func() string {
+	p := reflect.TypeOf(Environment{}).PkgPath() // ".../interpreter"
+	if idx := strings.LastIndex(p, "/"); idx >= 0 {
+		return p[:idx]
+	}
+	return p
+}()
+
+// isEngineType reports whether t (after dereferencing pointers) is one of the
+// engine's own internal runtime types — anything in a sub-package of the engine
+// module, such as interpreter.Function, interpreter.Environment, or the ast
+// nodes reachable through Function.Body. The module root package is deliberately
+// not treated as internal: it holds the public API and may legitimately hold a
+// host's bound types.
+func isEngineType(t reflect.Type) bool {
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	pkg := t.PkgPath()
+	return pkg != "" && strings.HasPrefix(pkg, enginePkgPrefix+"/")
+}
+
 // reflectivePropertyAccess uses reflection to access properties on Go objects.
 func (i *Interpreter) reflectivePropertyAccess(object Value, propertyName string) (Value, error) {
 	val := reflect.ValueOf(object)
@@ -61,6 +87,19 @@ func (i *Interpreter) reflectivePropertyAccess(object Value, propertyName string
 			return nil, fmt.Errorf("cannot access property '%s' on nil pointer", propertyName)
 		}
 		val = val.Elem()
+	}
+
+	// Refuse reflection into the engine's own internal types. A user function is
+	// an *interpreter.Function whose Env field is exported, and *Environment
+	// exposes Get/Set/Release; without this barrier a script could read and
+	// rewrite the interpreter's environments and, through Release, poison the
+	// shared environment pool for later executions in the same process.
+	// Reflection is only meant for host objects bound by the caller, which never
+	// live in the engine's own packages. The error is identical to a missing
+	// member, so a probing script cannot tell an internal type from an absent
+	// property.
+	if isEngineType(val.Type()) {
+		return nil, fmt.Errorf("property or method '%s' not found on %T", propertyName, object)
 	}
 
 	info := resolveMember(val, propertyName)
