@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -63,6 +64,96 @@ func Stringify(v interface{}) string {
 		return "{" + strings.Join(parts, ", ") + "}"
 	default:
 		return fmt.Sprintf("%v", v)
+	}
+}
+
+// ErrValueTooLarge is returned when an operation's result would exceed
+// MaxValueSize. Callers may test for it with errors.Is.
+var ErrValueTooLarge = errors.New("value too large")
+
+// maxStringifyDepth bounds how deeply StringifyBounded descends, so a value
+// nested far deeper than any real payload (built at runtime by a loop such as
+// `a = [a]`) cannot overflow the native stack before the size budget bites.
+const maxStringifyDepth = 10000
+
+// StringifyBounded renders v exactly as Stringify, but fails with
+// ErrValueTooLarge as soon as the output would exceed limit bytes or nest
+// deeper than maxStringifyDepth. It checks the budget at every write, so a
+// deeply shared structure (a = [a, a] repeated) never materialises its
+// astronomically large flattened form.
+func StringifyBounded(v interface{}, limit int) (string, error) {
+	var sb strings.Builder
+	err := stringifyInto(&sb, v, limit, 0)
+	// Return the partial render alongside the error so callers that cannot
+	// propagate one (value comparison, keying) can use the truncated prefix.
+	return sb.String(), err
+}
+
+func stringifyInto(sb *strings.Builder, v interface{}, limit, depth int) error {
+	if depth > maxStringifyDepth {
+		return ErrValueTooLarge
+	}
+	write := func(s string) error {
+		if sb.Len()+len(s) > limit {
+			return ErrValueTooLarge
+		}
+		sb.WriteString(s)
+		return nil
+	}
+	switch val := v.(type) {
+	case nil:
+		return write("null")
+	case string:
+		return write(val)
+	case bool:
+		if val {
+			return write("true")
+		}
+		return write("false")
+	case float64:
+		if val == float64(int64(val)) {
+			return write(strconv.FormatInt(int64(val), 10))
+		}
+		return write(strconv.FormatFloat(val, 'f', -1, 64))
+	case int:
+		return write(strconv.Itoa(val))
+	case int64:
+		return write(strconv.FormatInt(val, 10))
+	case []interface{}:
+		if err := write("["); err != nil {
+			return err
+		}
+		for idx, e := range val {
+			if idx > 0 {
+				if err := write(", "); err != nil {
+					return err
+				}
+			}
+			if err := stringifyInto(sb, e, limit, depth+1); err != nil {
+				return err
+			}
+		}
+		return write("]")
+	case map[string]interface{}:
+		if err := write("{"); err != nil {
+			return err
+		}
+		for idx, k := range sortedKeys(val) {
+			if idx > 0 {
+				if err := write(", "); err != nil {
+					return err
+				}
+			}
+			if err := write(k + ": "); err != nil {
+				return err
+			}
+			if err := stringifyInto(sb, val[k], limit, depth+1); err != nil {
+				return err
+			}
+		}
+		return write("}")
+	default:
+		return write(fmt.Sprintf("%v", v))
 	}
 }
 
@@ -251,7 +342,11 @@ func nativeToString(args ...interface{}) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("toString requires 1 argument")
 	}
-	return Stringify(args[0]), nil
+	s, err := StringifyBounded(args[0], MaxValueSize)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 func nativeToNumber(args ...interface{}) (interface{}, error) {
@@ -381,11 +476,21 @@ func nativeJoin(args ...interface{}) (interface{}, error) {
 	if !ok {
 		return nil, fmt.Errorf("join requires a string as second argument")
 	}
-	strs := make([]string, len(arr))
+	var sb strings.Builder
 	for i, v := range arr {
-		strs[i] = Stringify(v)
+		if i > 0 {
+			if sb.Len()+len(sep) > MaxValueSize {
+				return nil, fmt.Errorf("join result too large (max %d)", MaxValueSize)
+			}
+			sb.WriteString(sep)
+		}
+		s, err := StringifyBounded(v, MaxValueSize-sb.Len())
+		if err != nil {
+			return nil, err
+		}
+		sb.WriteString(s)
 	}
-	return strings.Join(strs, sep), nil
+	return sb.String(), nil
 }
 
 func nativeReplace(args ...interface{}) (interface{}, error) {
@@ -403,6 +508,20 @@ func nativeReplace(args ...interface{}) (interface{}, error) {
 	new, ok := args[2].(string)
 	if !ok {
 		return nil, fmt.Errorf("replace requires a string as third argument")
+	}
+	// Bound the result without building it: ReplaceAll would otherwise allocate
+	// count*len(new) bytes in a single call, which neither the timeout nor the
+	// operation limit can interrupt. strings.Count(s, "") is runeCount+1.
+	var resultLen int64
+	if old == "" {
+		n := int64(strings.Count(s, ""))
+		resultLen = int64(len(s)) + n*int64(len(new))
+	} else {
+		n := int64(strings.Count(s, old))
+		resultLen = int64(len(s)) + n*(int64(len(new))-int64(len(old)))
+	}
+	if resultLen > int64(MaxValueSize) {
+		return nil, fmt.Errorf("replace result too large (max %d)", MaxValueSize)
 	}
 	return strings.ReplaceAll(s, old, new), nil
 }
@@ -472,14 +591,19 @@ func nativeIndexOf(args ...interface{}) (interface{}, error) {
 // operation such as repeat(s, 6e9), range(2e9), padLeft(s, 9e9) or a doubling
 // loop (a = a + a) exhausts memory and kills the process; the operation limit
 // never bites because it counts operations, not the memory each one allocates.
-// It is far above any realistic value a rule, template or composition produces.
-const MaxValueSize = 1 << 20 // 1,048,576
+// It is a process-wide default the host may raise or lower at startup through
+// kodi.SetMaxValueSize; it must not change while scripts are executing, and it
+// stays far above any realistic value a rule, template or composition produces.
+var MaxValueSize = 16 << 20 // 16 MiB (16,777,216)
 
 func nativePadLeft(args ...interface{}) (interface{}, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("padLeft requires at least 2 arguments")
 	}
-	s := Stringify(args[0])
+	s, err := StringifyBounded(args[0], MaxValueSize)
+	if err != nil {
+		return nil, err
+	}
 	length := int(asFloat(args[1]))
 	if length > MaxValueSize {
 		return nil, fmt.Errorf("padLeft length too large (max %d)", MaxValueSize)
@@ -501,7 +625,10 @@ func nativePadRight(args ...interface{}) (interface{}, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("padRight requires at least 2 arguments")
 	}
-	s := Stringify(args[0])
+	s, err := StringifyBounded(args[0], MaxValueSize)
+	if err != nil {
+		return nil, err
+	}
 	length := int(asFloat(args[1]))
 	if length > MaxValueSize {
 		return nil, fmt.Errorf("padRight length too large (max %d)", MaxValueSize)
@@ -523,7 +650,10 @@ func nativeRepeat(args ...interface{}) (interface{}, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("repeat requires 2 arguments")
 	}
-	s := Stringify(args[0])
+	s, err := StringifyBounded(args[0], MaxValueSize)
+	if err != nil {
+		return nil, err
+	}
 	count := int(asFloat(args[1]))
 	if count < 0 {
 		count = 0
@@ -566,9 +696,18 @@ func nativeJsonStringify(args ...interface{}) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("jsonStringify requires 1 argument")
 	}
+	// Reject values whose rendered form is unbounded in size or depth before
+	// handing them to json.Marshal, which would otherwise allocate without
+	// limit and recurse arbitrarily deep on a nested structure.
+	if _, err := StringifyBounded(args[0], MaxValueSize); err != nil {
+		return nil, err
+	}
 	b, err := json.Marshal(args[0])
 	if err != nil {
 		return nil, fmt.Errorf("cannot stringify: %v", err)
+	}
+	if len(b) > MaxValueSize {
+		return nil, fmt.Errorf("jsonStringify result too large (max %d)", MaxValueSize)
 	}
 	return string(b), nil
 }
@@ -582,6 +721,9 @@ func nativeBase64Encode(args ...interface{}) (interface{}, error) {
 	s, ok := args[0].(string)
 	if !ok {
 		return nil, fmt.Errorf("base64Encode requires a string argument")
+	}
+	if base64.StdEncoding.EncodedLen(len(s)) > MaxValueSize {
+		return nil, fmt.Errorf("base64Encode result too large (max %d)", MaxValueSize)
 	}
 	return base64.StdEncoding.EncodeToString([]byte(s)), nil
 }
@@ -612,7 +754,11 @@ func nativeUrlEncode(args ...interface{}) (interface{}, error) {
 		return nil, fmt.Errorf("urlEncode requires a string argument")
 	}
 	// Use PathEscape for RFC 3986 compliance (spaces as %20, not +)
-	return url.PathEscape(s), nil
+	escaped := url.PathEscape(s)
+	if len(escaped) > MaxValueSize {
+		return nil, fmt.Errorf("urlEncode result too large (max %d)", MaxValueSize)
+	}
+	return escaped, nil
 }
 
 func nativeUrlDecode(args ...interface{}) (interface{}, error) {
@@ -1173,9 +1319,10 @@ func compareValues(a, b interface{}) int {
 		return 0
 	}
 
-	// Try string comparison
-	aStr := fmt.Sprintf("%v", a)
-	bStr := fmt.Sprintf("%v", b)
+	// Try string comparison, rendered within a budget so a deeply shared
+	// structure cannot be turned into a memory-exhaustion vector here.
+	aStr, _ := StringifyBounded(a, MaxValueSize)
+	bStr, _ := StringifyBounded(b, MaxValueSize)
 	return strings.Compare(aStr, bStr)
 }
 
@@ -1189,31 +1336,39 @@ func getFieldValue(obj interface{}, field string) interface{} {
 
 // valueKey produces a comparison key for primitive values (used by unique/has).
 func valueKey(v interface{}) string {
-	return fmt.Sprintf("%T:%v", v, v)
+	s, _ := StringifyBounded(v, MaxValueSize)
+	return fmt.Sprintf("%T:%s", v, s)
 }
 
 func nativeRange(args ...interface{}) (interface{}, error) {
-	var start, end int
+	var startF, endF float64
 	switch len(args) {
 	case 1:
 		n, ok := toFloat(args[0])
 		if !ok {
 			return nil, fmt.Errorf("range requires number arguments")
 		}
-		start, end = 0, int(n)
+		startF, endF = 0, n
 	case 2:
 		s, ok1 := toFloat(args[0])
 		e, ok2 := toFloat(args[1])
 		if !ok1 || !ok2 {
 			return nil, fmt.Errorf("range requires number arguments")
 		}
-		start, end = int(s), int(e)
+		startF, endF = s, e
 	default:
 		return nil, fmt.Errorf("range requires 1 or 2 arguments")
 	}
-	if int64(end)-int64(start) > int64(MaxValueSize) {
+	// Guard the span in float space: int64(end)-int64(start) overflows for
+	// extreme bounds (range(-9e18, 9e18) wraps negative and slips past the
+	// check, then loops almost forever).
+	if math.IsNaN(startF) || math.IsNaN(endF) || math.IsInf(startF, 0) || math.IsInf(endF, 0) {
+		return nil, fmt.Errorf("range requires finite numbers")
+	}
+	if endF-startF > float64(MaxValueSize) {
 		return nil, fmt.Errorf("range too large (max %d)", MaxValueSize)
 	}
+	start, end := int(startF), int(endF)
 	result := []interface{}{}
 	for i := start; i < end; i++ {
 		result = append(result, float64(i))
@@ -1297,6 +1452,9 @@ func nativeFlatten(args ...interface{}) (interface{}, error) {
 		} else {
 			result = append(result, v)
 		}
+		if len(result) > MaxValueSize {
+			return nil, fmt.Errorf("flatten result too large (max %d)", MaxValueSize)
+		}
 	}
 	return result, nil
 }
@@ -1322,6 +1480,9 @@ func nativeConcat(args ...interface{}) (interface{}, error) {
 			return nil, fmt.Errorf("concat requires array arguments")
 		}
 		result = append(result, arr...)
+		if len(result) > MaxValueSize {
+			return nil, fmt.Errorf("concat result too large (max %d)", MaxValueSize)
+		}
 	}
 	return result, nil
 }
@@ -1490,6 +1651,30 @@ func nativeRegexReplace(args ...interface{}) (interface{}, error) {
 	re, err := regexp.Compile(pat)
 	if err != nil {
 		return nil, fmt.Errorf("invalid regex: %v", err)
+	}
+	// Fast path: when even the largest conceivable output fits, replace directly.
+	// A match count cannot exceed len(s)+1, so the output is at most
+	// len(s) + (len(s)+1)*len(repl).
+	if int64(len(s))+(int64(len(s))+1)*int64(len(repl)) <= int64(MaxValueSize) {
+		return re.ReplaceAllString(s, repl), nil
+	}
+	// Otherwise measure the exact output one match at a time (holding only a
+	// single expansion in memory) and refuse once it would exceed the limit.
+	// FindAllStringSubmatchIndex enumerates the same matches ReplaceAllString
+	// uses, so the measured length is exact.
+	var total int64
+	last := 0
+	for _, m := range re.FindAllStringSubmatchIndex(s, -1) {
+		total += int64(m[0] - last)
+		total += int64(len(re.ExpandString(nil, repl, s, m)))
+		last = m[1]
+		if total > int64(MaxValueSize) {
+			return nil, fmt.Errorf("regexReplace result too large (max %d)", MaxValueSize)
+		}
+	}
+	total += int64(len(s) - last)
+	if total > int64(MaxValueSize) {
+		return nil, fmt.Errorf("regexReplace result too large (max %d)", MaxValueSize)
 	}
 	return re.ReplaceAllString(s, repl), nil
 }

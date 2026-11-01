@@ -29,7 +29,32 @@ const (
 var (
 	ErrTimeout               = interpreter.ErrTimeout
 	ErrMaxOperationsExceeded = interpreter.ErrMaxOperationsExceeded
+	// ErrValueTooLarge is returned when a single operation's result would exceed
+	// the value-size ceiling (see SetMaxValueSize).
+	ErrValueTooLarge = natives.ErrValueTooLarge
 )
+
+// SetMaxValueSize sets the process-wide ceiling, in bytes, on the size of a
+// value any single operation may build (string concatenation, templates,
+// repeat, range, join, replace, array construction, …). It guards against a
+// script exhausting memory in one call, which neither the operation limit nor
+// the timeout can interrupt.
+//
+// The default is 16 MiB. Raise it to accommodate large host payloads (for
+// example a base64 document carried in an invocation body) or lower it to
+// tighten the bound. Call it once at startup, before any script runs; it must
+// not be changed while scripts are executing. A value <= 0 is ignored.
+func SetMaxValueSize(bytes int) {
+	if bytes > 0 {
+		natives.MaxValueSize = bytes
+	}
+}
+
+// GetMaxValueSize reports the current value-size ceiling in bytes (see
+// SetMaxValueSize).
+func GetMaxValueSize() int {
+	return natives.MaxValueSize
+}
 
 func classifyError(err error) ErrorKind {
 	switch {

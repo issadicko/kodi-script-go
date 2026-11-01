@@ -565,8 +565,13 @@ func (i *Interpreter) evalStringTemplate(tmpl *ast.StringTemplate) (Value, error
 			return nil, err
 		}
 
-		// Convert to string using fast path
-		sb.WriteString(toString(val))
+		// Bound the running result so a doubling template ("${a}${a}") cannot
+		// exhaust memory — this path does not go through evalPlus.
+		s, err := natives.StringifyBounded(val, natives.MaxValueSize-sb.Len())
+		if err != nil {
+			return nil, err
+		}
+		sb.WriteString(s)
 	}
 
 	return sb.String(), nil
@@ -741,14 +746,22 @@ func (i *Interpreter) evalPlus(left, right Value) (Value, error) {
 	// String concatenation with fast path. The result length is bounded so a
 	// doubling loop (a = a + a) cannot exhaust memory in a few operations.
 	if ls, ok := left.(string); ok {
-		rs := toString(right)
+		// Stringify the other side within the budget so a deeply shared
+		// structure cannot materialise, then bound the concatenation itself.
+		rs, err := natives.StringifyBounded(right, natives.MaxValueSize)
+		if err != nil {
+			return nil, err
+		}
 		if len(ls)+len(rs) > natives.MaxValueSize {
 			return nil, fmt.Errorf("string too large (max %d)", natives.MaxValueSize)
 		}
 		return ls + rs, nil
 	}
 	if rs, ok := right.(string); ok {
-		ls := toString(left)
+		ls, err := natives.StringifyBounded(left, natives.MaxValueSize)
+		if err != nil {
+			return nil, err
+		}
 		if len(ls)+len(rs) > natives.MaxValueSize {
 			return nil, fmt.Errorf("string too large (max %d)", natives.MaxValueSize)
 		}
@@ -1219,7 +1232,12 @@ func toNumber(val Value) (float64, bool) {
 // builtinPrint writes each argument to stdout (unless silenced) and captures it.
 func (i *Interpreter) builtinPrint(args []Value) (Value, error) {
 	for _, arg := range args {
-		output := toString(arg)
+		// Bound rendering so print() of a deeply shared structure cannot
+		// exhaust memory before it is captured.
+		output, err := natives.StringifyBounded(arg, natives.MaxValueSize)
+		if err != nil {
+			return nil, err
+		}
 		if i.outputSink != nil {
 			i.outputSink(output)
 		} else if !i.silentPrint {
