@@ -408,6 +408,11 @@ func nativeSubstring(args ...interface{}) (interface{}, error) {
 		if endIdx > len(s) {
 			endIdx = len(s)
 		}
+		// An end before the start (including a negative end, e.g. from a
+		// failed indexOf returning -1) yields an empty string, not a panic.
+		if endIdx < startIdx {
+			return "", nil
+		}
 		return s[startIdx:endIdx], nil
 	}
 
@@ -1044,8 +1049,19 @@ func nativeRandomInt(args ...interface{}) (interface{}, error) {
 	if !ok {
 		return nil, fmt.Errorf("randomInt requires number arguments")
 	}
+	if math.IsNaN(min) || math.IsNaN(max) || math.IsInf(min, 0) || math.IsInf(max, 0) {
+		return nil, fmt.Errorf("randomInt requires finite numbers")
+	}
 	if min >= max {
 		return nil, fmt.Errorf("randomInt: min must be less than max")
+	}
+	// Bound the endpoints to the exactly-representable integer range so the
+	// span below cannot overflow int64 and hand rand.Intn a non-positive
+	// argument, which panics. Beyond 2^53, consecutive integers are not even
+	// representable in float64.
+	const maxSafeInt = 1 << 53
+	if min < -maxSafeInt || max > maxSafeInt {
+		return nil, fmt.Errorf("randomInt: arguments out of range (max magnitude %d)", int64(maxSafeInt))
 	}
 	return float64(rand.Intn(int(max)-int(min)+1) + int(min)), nil
 }
@@ -1338,6 +1354,26 @@ func getFieldValue(obj interface{}, field string) interface{} {
 func valueKey(v interface{}) string {
 	s, _ := StringifyBounded(v, MaxValueSize)
 	return fmt.Sprintf("%T:%s", v, s)
+}
+
+// ValuesEqual reports whether two KodiScript values are equal without ever
+// panicking. Go's == panics when both operands hold the same uncomparable
+// dynamic type, so comparing two arrays or two objects with == used to crash
+// the whole process (an unrecovered panic, triggerable by data). Those are
+// compared here by their bounded canonical key: structural equality that
+// cannot explode on a deeply shared structure. Every other value (numbers,
+// strings, booleans, nil, function pointers) keeps Go's native == semantics.
+func ValuesEqual(a, b interface{}) bool {
+	switch av := a.(type) {
+	case []interface{}:
+		bv, ok := b.([]interface{})
+		return ok && valueKey(av) == valueKey(bv)
+	case map[string]interface{}:
+		bv, ok := b.(map[string]interface{})
+		return ok && valueKey(av) == valueKey(bv)
+	default:
+		return a == b
+	}
 }
 
 func nativeRange(args ...interface{}) (interface{}, error) {

@@ -4,6 +4,7 @@ package kodi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/issadicko/kodi-script-go/ast"
@@ -23,6 +24,7 @@ const (
 	ErrorKindRuntime
 	ErrorKindTimeout
 	ErrorKindMaxOperations
+	ErrorKindInternal
 )
 
 // Re-exported typed errors so callers can use errors.Is on Result.Err.
@@ -32,6 +34,9 @@ var (
 	// ErrValueTooLarge is returned when a single operation's result would exceed
 	// the value-size ceiling (see SetMaxValueSize).
 	ErrValueTooLarge = natives.ErrValueTooLarge
+	// ErrInternalError wraps a runtime panic recovered inside Execute and
+	// surfaced as a normal error, so a script can never crash the process.
+	ErrInternalError = errors.New("internal engine error")
 )
 
 // SetMaxValueSize sets the process-wide ceiling, in bytes, on the size of a
@@ -158,8 +163,23 @@ func (s *Script) WithTimeout(timeout time.Duration) *Script {
 }
 
 // Execute runs the script and returns the result.
-func (s *Script) Execute() *Result {
-	result := &Result{}
+func (s *Script) Execute() (result *Result) {
+	result = &Result{}
+
+	// A runtime panic in the interpreter or a native must not escape into the
+	// caller's goroutine and kill the shared process. Recover it here and
+	// return it as an ordinary error. (A stack overflow is a fatal runtime
+	// error that recover cannot catch; the parser and evaluator depth limits
+	// are what prevent that one.)
+	defer func() {
+		if r := recover(); r != nil {
+			result.Value = nil
+			result.Output = nil
+			result.Err = fmt.Errorf("%w: %v", ErrInternalError, r)
+			result.Errors = []string{result.Err.Error()}
+			result.Kind = ErrorKindInternal
+		}
+	}()
 
 	var program *ast.Program
 

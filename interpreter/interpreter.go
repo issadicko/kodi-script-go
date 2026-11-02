@@ -726,9 +726,11 @@ func (i *Interpreter) evalBinaryExpr(expr *ast.BinaryExpr) (Value, error) {
 	case "%":
 		return i.evalArithmetic(left, right, "%")
 	case "==":
-		return left == right, nil
+		// Structural, panic-free equality: a bare left == right panics when
+		// both sides are arrays or objects (the same uncomparable dynamic type).
+		return natives.ValuesEqual(left, right), nil
 	case "!=":
-		return left != right, nil
+		return !natives.ValuesEqual(left, right), nil
 	case "<":
 		return i.evalComparison(left, right, "<")
 	case ">":
