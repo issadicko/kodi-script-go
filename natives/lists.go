@@ -23,10 +23,11 @@ func ListArg(name string, v interface{}) ([]interface{}, error) {
 	return nil, fmt.Errorf("%s requires an array as first argument", name)
 }
 
-// EqualityKey identifies a value for equality: its type and its canonical form.
+// EqualityKey identifies a value for equality with a type-faithful, bounded
+// key, so that 1 and "1", or [1] and ["1"], never collide (and a shared or
+// oversized value cannot explode it).
 func EqualityKey(v interface{}) string {
-	kind, _ := nativeTypeOf(v)
-	return kind.(string) + ":" + Stringify(v)
+	return canonicalKey(v)
 }
 
 // CompareValues orders two values: numbers numerically, anything else by canonical form.
@@ -158,7 +159,10 @@ func nativeFromEntries(args ...interface{}) (interface{}, error) {
 		if !ok || len(pair) < 2 {
 			return nil, fmt.Errorf("fromEntries requires each element to be a [key, value] pair")
 		}
-		result[Stringify(pair[0])] = pair[1]
+		// Render the key within a budget so a shared or oversized key value
+		// cannot exhaust memory here.
+		key, _ := StringifyBounded(pair[0], MaxValueSize)
+		result[key] = pair[1]
 	}
 	return result, nil
 }

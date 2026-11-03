@@ -13,6 +13,7 @@ import (
 	"math"
 	"math/rand"
 	"net/url"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -1335,10 +1336,12 @@ func compareValues(a, b interface{}) int {
 		return 0
 	}
 
-	// Try string comparison, rendered within a budget so a deeply shared
-	// structure cannot be turned into a memory-exhaustion vector here.
-	aStr, _ := StringifyBounded(a, MaxValueSize)
-	bStr, _ := StringifyBounded(b, MaxValueSize)
+	// Try string comparison, rendered within the small key budget: a shared
+	// structure cannot explode it, and a sort of large values stays cheap
+	// enough to finish within the timeout (a full-budget render per comparison
+	// made each one cost tens of milliseconds).
+	aStr, _ := StringifyBounded(a, maxKeySize)
+	bStr, _ := StringifyBounded(b, maxKeySize)
 	return strings.Compare(aStr, bStr)
 }
 
@@ -1350,29 +1353,165 @@ func getFieldValue(obj interface{}, field string) interface{} {
 	return nil
 }
 
-// valueKey produces a comparison key for primitive values (used by unique/has).
+// maxKeySize bounds the rendered form of a value used only as an equality key
+// or for ordering (unique, has, sort, set operations). A key never needs the
+// full value budget: keeping it small keeps every comparison cheap (so an
+// N log N sort stays within the timeout) and keeps a retained key set small.
+// Two values that differ only past maxKeySize may collide — acceptable for
+// pathological inputs.
+const maxKeySize = 64 << 10 // 64 KiB
+
+// valueKey produces an equality key for unique/has. It is type-faithful
+// (a number, a string, a boolean, null, an array and an object never collide)
+// and bounded, so a shared or oversized structure cannot explode it.
 func valueKey(v interface{}) string {
-	s, _ := StringifyBounded(v, MaxValueSize)
-	return fmt.Sprintf("%T:%s", v, s)
+	return canonicalKey(v)
 }
 
-// ValuesEqual reports whether two KodiScript values are equal without ever
-// panicking. Go's == panics when both operands hold the same uncomparable
-// dynamic type, so comparing two arrays or two objects with == used to crash
-// the whole process (an unrecovered panic, triggerable by data). Those are
-// compared here by their bounded canonical key: structural equality that
-// cannot explode on a deeply shared structure. Every other value (numbers,
-// strings, booleans, nil, function pointers) keeps Go's native == semantics.
-func ValuesEqual(a, b interface{}) bool {
+// canonicalKey renders a value as an unambiguous, type-tagged key within
+// maxKeySize. Each kind carries a tag and strings are length-prefixed, so a
+// number and a string, or an array and a string that looks like one, are never
+// confused (a plain rendering dropped both the quotes and the types). It never
+// panics and is bounded.
+func canonicalKey(v interface{}) string {
+	var sb strings.Builder
+	canonicalKeyInto(&sb, v, maxKeySize, 0)
+	return sb.String()
+}
+
+func canonicalKeyInto(sb *strings.Builder, v interface{}, limit, depth int) {
+	if sb.Len() >= limit || depth > maxStringifyDepth {
+		return
+	}
+	switch val := v.(type) {
+	case nil:
+		sb.WriteString("z;")
+	case bool:
+		if val {
+			sb.WriteString("t;")
+		} else {
+			sb.WriteString("f;")
+		}
+	case float64:
+		sb.WriteByte('n')
+		if val == float64(int64(val)) {
+			sb.WriteString(strconv.FormatInt(int64(val), 10))
+		} else {
+			sb.WriteString(strconv.FormatFloat(val, 'f', -1, 64))
+		}
+		sb.WriteByte(';')
+	case int:
+		sb.WriteByte('n')
+		sb.WriteString(strconv.Itoa(val))
+		sb.WriteByte(';')
+	case int64:
+		sb.WriteByte('n')
+		sb.WriteString(strconv.FormatInt(val, 10))
+		sb.WriteByte(';')
+	case string:
+		writeKeyString(sb, val, limit)
+	case []interface{}:
+		sb.WriteString("a[")
+		for _, e := range val {
+			if sb.Len() >= limit {
+				break
+			}
+			canonicalKeyInto(sb, e, limit, depth+1)
+		}
+		sb.WriteString("]")
+	case map[string]interface{}:
+		sb.WriteString("o{")
+		for _, k := range sortedKeys(val) {
+			if sb.Len() >= limit {
+				break
+			}
+			writeKeyString(sb, k, limit)
+			sb.WriteByte('=')
+			canonicalKeyInto(sb, val[k], limit, depth+1)
+		}
+		sb.WriteString("}")
+	default:
+		sb.WriteString(fmt.Sprintf("?%T:%v;", v, v))
+	}
+}
+
+// writeKeyString appends a length-prefixed string so a delimiter inside it
+// cannot change the parse ("a,b" never looks like two array elements).
+func writeKeyString(sb *strings.Builder, s string, limit int) {
+	sb.WriteByte('s')
+	sb.WriteString(strconv.Itoa(len(s)))
+	sb.WriteByte(':')
+	if room := limit - sb.Len(); room > 0 {
+		if len(s) > room {
+			s = s[:room]
+		}
+		sb.WriteString(s)
+	}
+	sb.WriteByte(';')
+}
+
+// maxEqualityDepth bounds structural comparison so a deep runtime-built
+// structure cannot overflow the stack (which recover cannot catch).
+const maxEqualityDepth = 10000
+
+var errEqualityTooDeep = errors.New("equality comparison too deep")
+
+// ValuesEqual reports structural equality of two KodiScript values. Go's ==
+// panics on two arrays or two objects (the same uncomparable dynamic type);
+// this compares by type and value instead — a number never equals a string,
+// and nothing is decided from a truncated rendering. It never crashes: a set
+// of already-compared pointer pairs keeps it linear on a shared structure, and
+// a depth bound turns an over-deep comparison into an error instead of a stack
+// overflow.
+func ValuesEqual(a, b interface{}) (bool, error) {
+	return deepEqual(a, b, 0, map[[2]uintptr]struct{}{})
+}
+
+func deepEqual(a, b interface{}, depth int, seen map[[2]uintptr]struct{}) (bool, error) {
+	if depth > maxEqualityDepth {
+		return false, errEqualityTooDeep
+	}
 	switch av := a.(type) {
 	case []interface{}:
 		bv, ok := b.([]interface{})
-		return ok && valueKey(av) == valueKey(bv)
+		if !ok || len(av) != len(bv) {
+			return false, nil
+		}
+		pair := [2]uintptr{reflect.ValueOf(a).Pointer(), reflect.ValueOf(b).Pointer()}
+		if _, done := seen[pair]; done {
+			return true, nil
+		}
+		seen[pair] = struct{}{}
+		for i := range av {
+			eq, err := deepEqual(av[i], bv[i], depth+1, seen)
+			if err != nil || !eq {
+				return eq, err
+			}
+		}
+		return true, nil
 	case map[string]interface{}:
 		bv, ok := b.(map[string]interface{})
-		return ok && valueKey(av) == valueKey(bv)
+		if !ok || len(av) != len(bv) {
+			return false, nil
+		}
+		pair := [2]uintptr{reflect.ValueOf(a).Pointer(), reflect.ValueOf(b).Pointer()}
+		if _, done := seen[pair]; done {
+			return true, nil
+		}
+		seen[pair] = struct{}{}
+		for k, va := range av {
+			vb, present := bv[k]
+			if !present {
+				return false, nil
+			}
+			eq, err := deepEqual(va, vb, depth+1, seen)
+			if err != nil || !eq {
+				return eq, err
+			}
+		}
+		return true, nil
 	default:
-		return a == b
+		return a == b, nil
 	}
 }
 
@@ -1400,6 +1539,17 @@ func nativeRange(args ...interface{}) (interface{}, error) {
 	// check, then loops almost forever).
 	if math.IsNaN(startF) || math.IsNaN(endF) || math.IsInf(startF, 0) || math.IsInf(endF, 0) {
 		return nil, fmt.Errorf("range requires finite numbers")
+	}
+	// Reject bounds outside the exactly-representable integer range. int(f) of
+	// a float beyond int64 is MinInt64 on amd64 (it saturates on arm64), so a
+	// start past 2^63 with a smaller end slipped past the span check below and
+	// then looped from MinInt64 — a process-killing allocation on amd64.
+	const maxSafeInt = 1 << 53
+	if startF < -maxSafeInt || startF > maxSafeInt || endF < -maxSafeInt || endF > maxSafeInt {
+		return nil, fmt.Errorf("range: arguments out of range (max magnitude %d)", int64(maxSafeInt))
+	}
+	if endF <= startF {
+		return []interface{}{}, nil
 	}
 	if endF-startF > float64(MaxValueSize) {
 		return nil, fmt.Errorf("range too large (max %d)", MaxValueSize)
